@@ -257,7 +257,7 @@ def measure(cues, ref, ref_end: float) -> dict:
         "match": round(prec, 3),
         "f1": round(f1, 3),
         "match_at_zero": round(sc_zero, 3),
-        "scale": round(scale, 5),
+        "scale": round(scale, 5),   # aday altyazıya uygulanacak çarpan (1.0 = sadece kayma)
         "regions": regions,
         "region_spread": spread,
     }

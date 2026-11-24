@@ -22,6 +22,8 @@ böler; duyarlılık doğal olarak düşük kalır.
 
 Sabit kayma yeterli değilse bilinen fps oranları (23.976 / 24 / 25) denenir; ölçek
 1'den belirgin saparsa araç bunu ayrıca söyler ve düzeltmeyi ölçekle uygular.
+`scale` altyazı zamanlarına uygulanan çarpandır: 23.976 kare hızına göre yazılmış
+bir altyazı 25 fps videoda `0.959` verir.
 
 ## Kurulum
 
