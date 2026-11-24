@@ -65,6 +65,37 @@ class ParseTests(unittest.TestCase):
             self.assertEqual(ss.parse_srt(p), [])
 
 
+class TimestampTests(unittest.TestCase):
+    def test_fraction_digit_counts(self):
+        # SRT 3 hane, ASS 2 hane, ffmpeg 4 hane yazabilir
+        for ts, expected in (("00:00:01,500", 1.5), ("00:00:01,5", 1.5),
+                             ("00:00:01,05", 1.05), ("00:00:01,5000", 1.5),
+                             ("00:00:01,50", 1.5)):
+            with self.subTest(ts=ts):
+                self.assertAlmostEqual(ss._ts_to_sec(ss.TS_RE.search(ts)), expected, places=3)
+
+
+class SilenceDetectTests(unittest.TestCase):
+    def test_leading_sound_does_not_shift_intervals(self):
+        # dosya sesle başlıyor: ilk silence_end, silence_start olmadan gelir
+        log = ("silence_end: 10.000 | silence_duration: 10.000\n"
+               "silence_start: 10.000\n"
+               "silence_end: 20.000 | silence_duration: 10.000\n")
+        speech = ss.parse_silencedetect(log, duration=30.0)
+        self.assertEqual(len(speech), 2)
+        self.assertAlmostEqual(speech[0][0], 0.0, places=2)
+        self.assertAlmostEqual(speech[0][1], 10.0, places=2)
+        self.assertAlmostEqual(speech[1][0], 20.0, places=2)
+
+    def test_leading_silence_is_handled(self):
+        log = ("silence_start: 0\n"
+               "silence_end: 5.000 | silence_duration: 5.000\n"
+               "silence_start: 15.000\n")
+        speech = ss.parse_silencedetect(log, duration=20.0)
+        self.assertAlmostEqual(speech[0][0], 5.0, places=2)
+        self.assertAlmostEqual(speech[0][1], 15.0, places=2)
+
+
 class ShiftTests(unittest.TestCase):
     def test_shift_ts_formats_and_clamps(self):
         self.assertEqual(ss._shift_ts("00:00:01,000", 2.5), "00:00:03,500")
@@ -87,8 +118,25 @@ class ShiftTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             td = Path(td)
             p = write_srt(td, "z.srt", SRT_SAMPLE)
+            before = ss.parse_srt(p)
             ss.shift_srt(p, -30.0, td / "bak")
-            self.assertAlmostEqual(ss.parse_srt(p)[0][0], 0.0, places=2)
+            after = ss.parse_srt(p)
+        # sıfıra yaslanan replik süresini korumalı, 0.2 sn'ye çökmemeli
+        self.assertAlmostEqual(after[0][0], 0.0, places=2)
+        self.assertAlmostEqual(after[0][1] - after[0][0], (before[0][1] - before[0][0]) - 30.0 + 30.0,
+                               places=2)
+        self.assertGreater(after[0][1] - after[0][0], 2.0)
+
+    def test_shift_srt_reads_cp1254_and_keeps_text(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            p = td / "w.tr.srt"
+            body = "1\n00:00:02,000 --> 00:00:04,000\nGüneşli bir gün.\n"
+            p.write_bytes(body.encode("cp1254"))
+            ss.shift_srt(p, 1.0, td / "bak")
+            text = p.read_bytes().decode("cp1254")
+        self.assertIn("Güneşli bir gün.", text)
+        self.assertIn("00:00:03,000 --> 00:00:05,000", text)
 
     def test_shift_srt_preserves_bom_and_text(self):
         with tempfile.TemporaryDirectory() as td:
@@ -103,10 +151,12 @@ class ShiftTests(unittest.TestCase):
 class MeasureTests(unittest.TestCase):
     def test_recovers_known_shift(self):
         ref = make_cues()
-        cand = [(a + 7.0, b + 7.0) for a, b in ref]
-        res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
-        self.assertAlmostEqual(res["shift"], -7.0, delta=0.15)
-        self.assertGreater(res["match"], 0.95)
+        for injected in (7.0, 7.45, -3.33, 12.5):
+            cand = [(a + injected, b + injected) for a, b in ref]
+            res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
+            with self.subTest(injected=injected):
+                self.assertAlmostEqual(res["shift"], -injected, delta=0.15)
+                self.assertGreater(res["match"], 0.95)
 
     def test_identity_scores_high(self):
         ref = make_cues()
@@ -150,6 +200,14 @@ class DiscoveryTests(unittest.TestCase):
             video.write_bytes(b"")
             self.assertEqual(ss.find_reference_subtitle(video, exclude=tr), en)
             self.assertIsNone(ss.find_reference_subtitle(video, exclude=en))
+
+    def test_find_subtitle_with_brackets_in_name(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            name = "[Subs] Film [1080p]"
+            (td / f"{name}.mkv").write_bytes(b"")
+            tr = write_srt(td, f"{name}.tr.srt", SRT_SAMPLE)
+            self.assertEqual(ss.find_subtitle(td / f"{name}.mkv"), tr)
 
     def test_find_videos_includes_mp4(self):
         with tempfile.TemporaryDirectory() as td:

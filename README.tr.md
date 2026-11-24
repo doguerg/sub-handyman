@@ -203,6 +203,7 @@ python3 sub_handyman.py --scan /media/filmler --json > rapor.json || echo "kayma
 | `region_spread` | `regions` farkı; 1.5 saniyeyi geçerse sabit model şüpheli |
 | `needs_fix` | Eşleşme işlem yapmaya yetiyor ve bekleyen bir düzeltme var |
 | `aligned` | Eşleşme yüksek, düzeltilecek bir şey yok |
+| `applied` / `backup` | Yalnız `--fix` dosyayı gerçekten yazdıysa gelir |
 
 ## Çıktıyı okumak
 

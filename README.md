@@ -206,6 +206,7 @@ python3 sub_handyman.py --scan /media/movies --json > report.json || echo "drift
 | `region_spread` | Max minus min of `regions`; above ~1.5 s the constant model is doubtful |
 | `needs_fix` | The match is good enough to act on, and a correction is pending |
 | `aligned` | High match and nothing to correct |
+| `applied` / `backup` | Present only when `--fix` actually rewrote the file |
 
 ## Reading the output
 

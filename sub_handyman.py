@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 
 # ---------------------------------------------------------------- i18n
 # CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
@@ -95,7 +95,9 @@ TS_RE = re.compile(r"(\d+):(\d+):(\d+)[,.](\d+)")
 def _ts_to_sec(m: re.Match | None) -> float:
     if m is None:
         return 0.0
-    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) + int(m.group(4)) / 1000
+    # kesir basamak sayısı sabit değil: SRT 3 hane, ASS 2 hane, ffmpeg 4 hane yazabilir
+    frac = float("0." + m.group(4))
+    return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + int(m.group(3)) + frac
 
 
 def parse_srt(path: Path) -> list[tuple[float, float]]:
@@ -137,6 +139,41 @@ def extract_embedded_srt(video: Path, stream_index: int, dest: Path) -> Path:
     return dest
 
 
+def parse_silencedetect(log: str, duration: float = 0.0) -> list[tuple[float, float]]:
+    """silencedetect log'undan konuşma aralıkları (sessizliğin tümleyeni).
+
+    ffmpeg dosya sesle başlıyorsa ilk `silence_end`i `silence_start` olmadan
+    yazar. O durumda 0..end aralığı konuşmadır ve çiftler bir kaymamalıdır.
+    """
+    starts = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", log)]
+    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", log)]
+    if not duration:
+        m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", log)
+        duration = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
+
+    speech: list[tuple[float, float]] = []
+    cursor = 0.0
+    if ends and (not starts or ends[0] <= starts[0]):
+        lead = ends.pop(0)
+        if lead > 0:
+            speech.append((0.0, lead))
+        cursor = lead
+    if len(ends) < len(starts):
+        ends = ends + [duration] * (len(starts) - len(ends))
+
+    for a, b in zip(starts, ends):
+        a = max(cursor, max(0.0, a))
+        b = max(b, cursor)
+        if duration:
+            b = min(b, duration)
+        if a > cursor:
+            speech.append((cursor, a))
+        cursor = max(cursor, b)
+    if duration and cursor < duration:
+        speech.append((cursor, duration))
+    return speech
+
+
 def audio_speech_intervals(video: Path, duration: float,
                            noise_db: int = -32, min_silence: float = 0.3) -> list[tuple[float, float]]:
     """Sesi ffmpeg silencedetect ile tarayıp konuşma aralıklarını çıkarır.
@@ -147,24 +184,9 @@ def audio_speech_intervals(video: Path, duration: float,
                         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
                         "-f", "null", "-"], capture_output=True)
     log = (p.stderr or b"").decode("utf-8", "replace")
-    if p.returncode != 0 and not log:
-        raise RuntimeError("ses taranamadı")
-    starts = [float(x) for x in re.findall(r"silence_start: (-?[\d.]+)", log)]
-    ends = [float(x) for x in re.findall(r"silence_end: ([\d.]+)", log)]
-    if not duration:
-        m = re.search(r"Duration: (\d+):(\d+):(\d+\.?\d*)", log)
-        duration = (int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))) if m else 0.0
-    if len(ends) < len(starts):
-        ends = ends + [duration] * (len(starts) - len(ends))
-    speech, cursor = [], 0.0
-    for a, b in zip(starts, ends):
-        a, b = max(0.0, a), min(b, duration)
-        if a > cursor:
-            speech.append((cursor, a))
-        cursor = max(cursor, b)
-    if cursor < duration:
-        speech.append((cursor, duration))
-    return speech
+    if p.returncode != 0:
+        raise RuntimeError("ses taranamadı: " + (log.strip().splitlines() or ["bilinmeyen hata"])[-1][:200])
+    return parse_silencedetect(log, duration)
 
 
 # ------------------------------------------------------------------ ölçüm
@@ -217,15 +239,16 @@ def _f1(cues, cum: list[int], step: float, shift: float,
         lo_span = lo if lo_span is None else min(lo_span, lo)
         hi_span = hi if hi_span is None else max(hi_span, hi)
     if not den_c or lo_span is None or hi_span is None:
-        return 0.0, 0
+        return 0.0, 0.0
     # duyarlılık paydası genişletilmemiş referanstan: genişletme payı
     # eşleşmeyi abartmasın, aksi halde kusursuz hizalama bile 1.0 vermez
     ref_cum = ref_cum if ref_cum is not None else cum
     den_ref = ref_cum[hi_span + 1] - ref_cum[lo_span]
     if not den_ref:
         return 0.0, 0.0
-    tp = min(tp, den_ref)
-    prec, rec = tp / den_c, tp / den_ref
+    # tp'yi yerinde kırpmak precision'ı da kırpardı: sınırlama yalnız duyarlılıkta
+    prec = min(1.0, tp / den_c)
+    rec = min(1.0, tp / den_ref)
     f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
     return f1, prec
 
@@ -261,7 +284,7 @@ def measure(cues, ref, ref_end: float) -> dict:
     fine = _prefix(raw)
 
     def locate(cs, span=COARSE_RANGE):
-        _, sh = best_shift(cs, cum, step, -span, span, ref_cum=fine)
+        _, sh = best_shift(cs, cum, step, -span, span, sub_step=step, ref_cum=fine)
         f_sc, f_sh = best_shift(cs, fine, step, sh - 1.0, sh + 1.0, FINE_STEP)
         best = f_sh if f_sc > 0 else sh
         return best, _f1(cs, cum, step, best, fine)
@@ -313,17 +336,31 @@ def shift_srt(path: Path, delta: float, backup_dir: Path | None = None,
               scale: float = 1.0) -> Path:
     raw = path.read_bytes()
     bom = raw.startswith(b"\xef\xbb\xbf")
-    text = raw.decode("utf-8-sig").replace("\r\n", "\n")
+    try:
+        text = raw.decode("utf-8-sig")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        # CP1254 (Türkçe Windows) altyazılar yaygın; parse bunları zaten okur
+        text = raw.decode("cp1254", errors="replace")
+        encoding = "cp1254"
+        bom = False
+    text = text.replace("\r\n", "\n")
     out = []
     for line in text.split("\n"):
         m = re.match(r"^(\s*)(\d+:\d+:\d+[,.]\d+)(\s*-->\s*)(\d+:\d+:\d+[,.]\d+)(.*)$", line)
         if not m:
             out.append(line)
             continue
-        a = max(0.0, _ts_to_sec(TS_RE.search(m.group(2))) * scale + delta)
+        a = _ts_to_sec(TS_RE.search(m.group(2))) * scale + delta
         b = _ts_to_sec(TS_RE.search(m.group(4))) * scale + delta
-        out.append(m.group(1) + _fmt_ts(a) + m.group(3) + _fmt_ts(max(b, a + 0.2)) + m.group(5))
-    new = "\n".join(out).encode("utf-8")
+        length = max(0.2, b - a)
+        if a < 0:
+            # sıfırın önüne taşan replik: süresi korunur, sıfıra yaslanır
+            a, b = 0.0, length
+        else:
+            b = max(b, a + 0.2)
+        out.append(m.group(1) + _fmt_ts(a) + m.group(3) + _fmt_ts(b) + m.group(5))
+    new = "\n".join(out).encode(encoding)
     if bom:
         new = b"\xef\xbb\xbf" + new
     bak = (backup_dir / (path.name + ".bak")) if backup_dir else Path(str(path) + ".bak")
@@ -345,17 +382,27 @@ def _fmt_ts(t: float) -> str:
 
 
 # ------------------------------------------------------------ film bulma
-def find_subtitle(video: Path) -> Path | None:
+def _sibling_srts(video: Path) -> list[Path]:
+    """Video kök adıyla başlayan .srt'ler. glob() değil iterdir(): dosya adındaki
+    [ ] karakterleri glob'da karakter sınıfı sayılır ve dosya bulunamaz."""
     stem = video.stem
-    cands = sorted(video.parent.glob(stem + "*.srt"))
+    try:
+        items = list(video.parent.iterdir())
+    except OSError:
+        return []
+    return sorted(p for p in items
+                  if p.is_file() and p.suffix.lower() == ".srt" and p.name.startswith(stem))
+
+
+def find_subtitle(video: Path) -> Path | None:
+    cands = _sibling_srts(video)
     pref = [c for c in cands if re.search(r"\.tr(\.|\.srt$)", c.name, re.I)]
     return (pref or cands or [None])[0]
 
 
 def find_reference_subtitle(video: Path, exclude: Path | None = None) -> Path | None:
     """Video yanındaki İngilizce altyazıyı referans olarak bul."""
-    stem = video.stem
-    for c in sorted(video.parent.glob(stem + "*.srt")):
+    for c in _sibling_srts(video):
         if exclude and c.resolve() == exclude.resolve():
             continue
         if re.search(r"[._](en|eng)\b", c.name, re.I) or re.search(r"\.en\.", c.name, re.I):
@@ -385,13 +432,20 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
     streams = probe_streams(video)
     subs = [s for s in streams if s.get("codec_type") == "subtitle"
             and s.get("codec_name") in ("subrip", "srt", "ass", "ssa", "mov_text")]
-    eng = [s for s in subs if "eng" in (s.get("tags", {}).get("language") or "").lower()]
+    def _is_english(stream: dict) -> bool:
+        lang = (stream.get("tags", {}).get("language") or "").strip().lower()
+        return lang in ("en", "eng") or lang.startswith("en-")
+
+    eng = [s for s in subs if _is_english(s)]
     pick = (eng or subs or [None])[0]
 
     tmp = None
     m = None
     if pick and not use_audio:
-        tmp = Path(os.environ.get("TMPDIR", "/tmp")) / f"subsync_ref_{video.stem[:40]}.srt"
+        import tempfile
+        fd, tmp_name = tempfile.mkstemp(prefix="sub_handyman_ref_", suffix=".srt")
+        os.close(fd)
+        tmp = Path(tmp_name)
         try:
             extract_embedded_srt(video, pick["index"], tmp)
             ref_cues = parse_srt(tmp)
@@ -414,9 +468,12 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
             except Exception:
                 m = None
     if m is None:
-        dur = float(re.search(r"duration=([\d.]+)", _run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1",
-             str(video)])).group(1))
+        dur_raw = _run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                        "-of", "default=nw=1", str(video)])
+        dur_match = re.search(r"duration=([\d.]+)", dur_raw)
+        if not dur_match:
+            raise RuntimeError("video süresi okunamadı (duration=N/A)")
+        dur = float(dur_match.group(1))
         intervals = audio_speech_intervals(video, dur)
         m = measure(cues, ("audio", intervals), dur)
         m["method"] = t("audio_method")
@@ -488,8 +545,9 @@ def main() -> int:
     if not args.video and not args.scan:
         ap.error("video dosyası ya da --scan <klasör> gerekli")
 
-    targets = find_videos(Path(args.scan).expanduser()) if args.scan else [Path(args.video).expanduser()]
-    if args.scan and not targets:
+    root = Path(args.scan or args.video).expanduser()
+    targets = find_videos(root)
+    if not targets:
         print(t("no_videos"))
         return 2
 
@@ -520,13 +578,18 @@ def main() -> int:
                               float(r.get("scale", 1.0)))
                     bak_path = (bak_dir / (Path(r["subtitle"]).name + ".bak")) if bak_dir \
                         else Path(str(r["subtitle"]) + ".bak")
-                    print(t("applied", path=bak_path))
+                    r["applied"] = True
+                    r["backup"] = str(bak_path)
+                    if not args.json:
+                        print(t("applied", path=bak_path))
                     worst = 1
         elif r.get("error"):
             worst = max(worst, 2)
 
     if args.json:
-        print(json.dumps(results if len(results) > 1 else results[0], ensure_ascii=False, indent=2))
+        # --scan her zaman dizi döner (tek sonuçta bile), tek dosya modu nesne
+        payload = results if (args.scan or len(results) > 1) else (results[0] if results else {})
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
     return worst
 
 
