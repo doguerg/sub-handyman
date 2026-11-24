@@ -316,6 +316,8 @@ sub_handyman [VİDEO | --scan DİZİN] [seçenekler]
 | `--lang {en,tr}` | Rapor dili, İngilizce ya da Türkçe |
 | `--version` | Sürümü yazdır |
 
+`--help` de aynı dil anahtarına uyuyor: `sub_handyman --help --lang tr`.
+
 ### Hangi altyazıyı seçiyor
 
 `Bir Film.mkv` verildiğinde aynı klasörde adı `Bir Film` ile başlayan `.srt`

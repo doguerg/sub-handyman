@@ -72,6 +72,8 @@ STRINGS = {
                  "tr": "    emin değil: iki dosya iyi örtüşmüyor, değiştirmeden önce kontrol et"},
     "measure_error": {"en": "measurement failed: {err}", "tr": "ölçüm hatası: {err}"},
     "no_videos": {"en": "no video files found", "tr": "klasörde video bulunamadı"},
+    "need_target": {"en": "give a video file, or --scan DIR",
+                    "tr": "bir video dosyası ya da --scan DİZİN ver"},
     "confirm": {"en": "    → shift by {shift:+.2f}s? [y/N] ",
                 "tr": "    → {shift:+.2f} sn kaydırılsın mı? [e/H] "},
     "applied": {"en": "    done, backup: {path}", "tr": "    yapıldı, yedek: {path}"},
@@ -526,32 +528,62 @@ def fmt_report(r: dict) -> str:
     return "\n".join(lines)
 
 
+HELP = {
+    "desc": {"en": "Measure how far a subtitle is off, and optionally fix it.",
+             "tr": "Altyazının ne kadar kaydığını ölçer, istersen düzeltir."},
+    "video": {"en": "video file, or a folder to search",
+              "tr": "video dosyası ya da taranacak klasör"},
+    "scan": {"en": "search a folder for videos (mkv, mp4, m4v, avi, mov, webm, ts)",
+             "tr": "klasördeki videoları tara (mkv, mp4, m4v, avi, mov, webm, ts)"},
+    "sub": {"en": "use this subtitle instead of the one found automatically",
+            "tr": "otomatik bulunan yerine bu altyazıyı kullan"},
+    "fix": {"en": "apply the measured shift", "tr": "ölçülen kaydırmayı uygula"},
+    "yes": {"en": "do not ask for confirmation", "tr": "onay sorma"},
+    "audio": {"en": "compare against the sound instead of a text subtitle",
+              "tr": "metin yerine sesle karşılaştır"},
+    "json": {"en": "print JSON instead of a report", "tr": "rapor yerine JSON yaz"},
+    "backup": {"en": "put .bak files here instead of next to the subtitle",
+               "tr": ".bak dosyalarını altyazının yanı yerine buraya koy"},
+    "lang": {"en": "report language, en or tr (default: SUB_HANDYMAN_LANG, else en)",
+             "tr": "rapor dili, en ya da tr (varsayılan: SUB_HANDYMAN_LANG, yoksa en)"},
+    "version": {"en": "print the version", "tr": "sürümü yazdır"},
+}
+
+
+def h(key: str) -> str:
+    return HELP[key].get(LANG, HELP[key]["en"])
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(
-        prog="sub_handyman",
-        description="Altyazı-video senkron denetleyici: kaymayı ölçer, istersen düzeltir.")
-    ap.add_argument("video", nargs="?", help="video dosyası veya film klasörü")
-    ap.add_argument("--scan", metavar="DIR", help="klasördeki tüm video dosyalarını tara")
-    ap.add_argument("--sub", help="altyazı dosyası (verilmezse video yanındaki .tr.srt)")
-    ap.add_argument("--fix", action="store_true", help="ölçülen kaymayı uygula")
-    ap.add_argument("--yes", action="store_true", help="onay sorma")
-    ap.add_argument("--audio", action="store_true", help="gömülü altyazı yerine sesi referans al")
-    ap.add_argument("--json", action="store_true", help="JSON çıktı")
-    ap.add_argument("--backup-dir", default=None,
-                    help="yedek klasörü (varsayılan: altyazının yanında .bak)")
-    ap.add_argument("--lang", choices=("en", "tr"), default=None,
-                    help="output language (default: SUB_HANDYMAN_LANG or en)")
-    ap.add_argument("--version", action="version", version=f"sub_handyman {__version__}")
+    global LANG
+    # --lang hem raporu hem yardım metnini belirler, o yüzden argparse'tan önce okunur
+    for i, a in enumerate(sys.argv[1:], 1):
+        if a == "--lang" and i + 1 < len(sys.argv):
+            LANG = sys.argv[i + 1]
+        elif a.startswith("--lang="):
+            LANG = a.split("=", 1)[1]
+    if LANG not in ("en", "tr"):
+        LANG = "en"
+
+    ap = argparse.ArgumentParser(prog="sub_handyman", description=h("desc"))
+    ap.add_argument("video", nargs="?", help=h("video"))
+    ap.add_argument("--scan", metavar="DIR", help=h("scan"))
+    ap.add_argument("--sub", metavar="FILE", help=h("sub"))
+    ap.add_argument("--fix", action="store_true", help=h("fix"))
+    ap.add_argument("--yes", action="store_true", help=h("yes"))
+    ap.add_argument("--audio", action="store_true", help=h("audio"))
+    ap.add_argument("--json", action="store_true", help=h("json"))
+    ap.add_argument("--backup-dir", metavar="DIR", default=None, help=h("backup"))
+    ap.add_argument("--lang", choices=("en", "tr"), default=None, help=h("lang"))
+    ap.add_argument("--version", action="version", version=f"sub_handyman {__version__}",
+                    help=h("version"))
     args = ap.parse_args()
 
     if args.lang:
-        global LANG
         LANG = args.lang
-    elif LANG not in ("en", "tr"):
-        LANG = "en"
 
     if not args.video and not args.scan:
-        ap.error("video dosyası ya da --scan <klasör> gerekli")
+        ap.error(t("need_target"))
 
     root = Path(args.scan or args.video).expanduser()
     targets = find_videos(root)

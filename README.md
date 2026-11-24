@@ -319,6 +319,8 @@ sub_handyman [VIDEO | --scan DIR] [options]
 | `--lang {en,tr}` | Report language, English or Turkish |
 | `--version` | Print the version |
 
+`--help` follows the same language switch: `sub_handyman --help --lang tr`.
+
 ### Which subtitle it picks
 
 Given `Some Movie.mkv`, it looks in the same folder for `.srt` files whose name
