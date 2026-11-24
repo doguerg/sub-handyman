@@ -31,7 +31,52 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
+
+# ---------------------------------------------------------------- i18n
+# CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
+# --lang tr ile Türkçe. JSON alan adları dile bağlı değil.
+LANG = os.environ.get("SUB_HANDYMAN_LANG", "en")
+
+STRINGS = {
+    "no_srt": {"en": "no .srt next to the video", "tr": "yanında .srt yok"},
+    "too_short": {"en": "subtitle too short ({n} cues)", "tr": "altyazı çok kısa ({n} replik)"},
+    "ref_too_short": {"en": "reference too short", "tr": "referans çok kısa"},
+    "emb_method": {"en": "embedded subtitle (stream {i})", "tr": "gömülü altyazı (stream {i})"},
+    "sib_method": {"en": "sibling reference ({name})", "tr": "yan dosya referansı ({name})"},
+    "audio_method": {"en": "audio (silencedetect speech intervals)",
+                     "tr": "ses (silencedetect konuşma aralıkları)"},
+    "warn_scale": {"en": "frame-rate mismatch suspected (scale {scale:.5f}): a constant shift "
+                         "cannot fix this, --fix applies scale + shift",
+                   "tr": "fps uyuşmazlığı görünüyor (ölçek {scale:.5f}) → sabit kayma yetmez, "
+                         "--fix ile ölçekli düzeltme uygulanır"},
+    "warn_region": {"en": "region offsets disagree ({spread:.1f}s start to end): "
+                          "a constant shift is not trustworthy",
+                    "tr": "bölge kaymaları tutarsız (baş/orta/son arası {spread:.1f} sn) "
+                          "→ sabit kayma güvenilir değil"},
+    "sub_line": {"en": "    subtitle: {name} ({cues} cues)",
+                 "tr": "    altyazı: {name} ({cues} replik)"},
+    "shift_line": {"en": "    offset: {shift:+.2f}s · match: {match:.1f}% (at zero {zero:.1f}%) · F1 {f1:.1f}%",
+                   "tr": "    kayma: {shift:+.2f} sn · eşleşme: {match:.1f}% (0 kaymada {zero:.1f}%) · F1 {f1:.1f}%"},
+    "scale_line": {"en": "    scale: {scale:.5f} (frame-rate difference)",
+                   "tr": "    ölçek: {scale:.5f} (fps farkı)"},
+    "ref_line": {"en": "    reference: {method}", "tr": "    referans: {method}"},
+    "regions_line": {"en": "    regions (start/mid/end): {regions}",
+                     "tr": "    bölgeler (baş/orta/son): {regions}"},
+    "low_conf": {"en": "    low confidence: weak match, do not apply without checking",
+                 "tr": "    güvenilir ölçüm yok: eşleşme zayıf, doğrulamadan düzeltme yapma"},
+    "measure_error": {"en": "measurement failed: {err}", "tr": "ölçüm hatası: {err}"},
+    "no_videos": {"en": "no video files found", "tr": "klasörde video bulunamadı"},
+    "confirm": {"en": "    → shift by {shift:+.2f}s? [y/N] ", "tr": "    → {shift:+.2f} sn kaydırılsın mı? [e/H] "},
+    "applied": {"en": "    applied, backup: {path}", "tr": "    uygulandı, yedek: {path}"},
+    "yes": {"en": ("y", "yes"), "tr": ("e", "evet")},
+}
+
+
+def t(key: str, **kw) -> str:
+    entry = STRINGS[key]
+    return entry.get(LANG, entry["en"]).format(**kw)
+
 
 THRESH_OK = 0.90          # bu örtüşmenin üstü: hizalı say
 THRESH_LOW = 0.55         # bunun altı: güvenilir ölçüm değil
@@ -332,10 +377,10 @@ def find_videos(root: Path) -> list[Path]:
 def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
     sub = sub or find_subtitle(video)
     if not sub or not sub.exists():
-        return {"video": str(video), "error": "yanında .srt yok"}
+        return {"video": str(video), "error": t("no_srt")}
     cues = parse_srt(sub)
     if len(cues) < 20:
-        return {"video": str(video), "subtitle": str(sub), "error": f"altyazı çok kısa ({len(cues)} replik)"}
+        return {"video": str(video), "subtitle": str(sub), "error": t("too_short", n=len(cues))}
 
     streams = probe_streams(video)
     subs = [s for s in streams if s.get("codec_type") == "subtitle"
@@ -351,10 +396,10 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
             extract_embedded_srt(video, pick["index"], tmp)
             ref_cues = parse_srt(tmp)
             if len(ref_cues) < 20:
-                raise RuntimeError("gömülü referans çok kısa")
+                raise RuntimeError(t("ref_too_short"))
             ref_end = max(b for _, b in ref_cues) + 30
             m = measure(cues, ref_cues, ref_end)
-            m["method"] = f"gömülü altyazı (stream {pick['index']})"
+            m["method"] = t("emb_method", i=pick["index"])
         except Exception:
             pick = None
     if m is None and not use_audio:
@@ -363,9 +408,9 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
             try:
                 ref_cues = parse_srt(ref)
                 if len(ref_cues) < 20:
-                    raise RuntimeError("yan dosya referansı çok kısa")
+                    raise RuntimeError(t("ref_too_short"))
                 m = measure(cues, ref_cues, max(b for _, b in ref_cues) + 30)
-                m["method"] = f"yan dosya referansı ({ref.name})"
+                m["method"] = t("sib_method", name=ref.name)
             except Exception:
                 m = None
     if m is None:
@@ -374,7 +419,7 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
              str(video)])).group(1))
         intervals = audio_speech_intervals(video, dur)
         m = measure(cues, ("audio", intervals), dur)
-        m["method"] = "ses (silencedetect konuşma aralıkları)"
+        m["method"] = t("audio_method")
 
     m.update({
         "video": str(video),
@@ -386,11 +431,9 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
                     and abs(m["scale"] - 1.0) <= 0.002),
     })
     if abs(m["scale"] - 1.0) > 0.002:
-        m["warning"] = (f"fps uyuşmazlığı görünüyor (ölçek {m['scale']:.5f}) → sabit kayma yetmez, "
-                        f"--fix ile ölçekli düzeltme uygulanır")
+        m["warning"] = t("warn_scale", scale=m["scale"])
     elif m["region_spread"] is not None and m["region_spread"] > 1.5:
-        m["warning"] = (f"bölge kaymaları tutarsız (baş/orta/son arası {m['region_spread']:.1f} sn) "
-                        f"→ sabit kayma güvenilir değil")
+        m["warning"] = t("warn_region", spread=m["region_spread"])
     if tmp and tmp.exists():
         tmp.unlink(missing_ok=True)
     return m
@@ -400,25 +443,28 @@ def fmt_report(r: dict) -> str:
     name = Path(r.get("video", "?")).stem
     if r.get("error"):
         return f"⚠️  {name}: {r['error']}"
-    lines = [f"{'✅' if r['aligned'] else ('🔧' if r['needs_fix'] else '❔')} {name}"]
-    lines.append(f"    altyazı: {Path(r['subtitle']).name} ({r['cues']} replik)")
-    lines.append(f"    kayma: {r['shift']:+.2f} sn · eşleşme: {r['match']*100:.1f}% "
-                 f"(0 kaymada {r['match_at_zero']*100:.1f}%) · F1 {r['f1']*100:.1f}%")
+    mark = "✅" if r["aligned"] else ("🔧" if r["needs_fix"] else "❔")
+    lines = [f"{mark} {name}"]
+    lines.append(t("sub_line", name=Path(r["subtitle"]).name, cues=r["cues"]))
+    lines.append(t("shift_line", shift=r["shift"], match=r["match"] * 100,
+                   zero=r["match_at_zero"] * 100, f1=r["f1"] * 100))
     if abs(r.get("scale", 1.0) - 1.0) > 0.002:
-        lines.append(f"    ölçek: {r['scale']:.5f} (fps farkı)")
-    lines.append(f"    referans: {r['method']}")
+        lines.append(t("scale_line", scale=r["scale"]))
+    lines.append(t("ref_line", method=r["method"]))
     if r.get("regions"):
         reg = " / ".join("?" if x is None else f"{x:+.2f}" for x in r["regions"])
-        lines.append(f"    bölgeler (baş/orta/son): {reg}")
+        lines.append(t("regions_line", regions=reg))
     if not r["aligned"] and not r["needs_fix"]:
-        lines.append("    ❔ güvenilir ölçüm yok: eşleşme zayıf, sonucu doğrulamadan düzeltme yapma")
+        lines.append(t("low_conf"))
     if r.get("warning"):
         lines.append(f"    ⚠️  {r['warning']}")
     return "\n".join(lines)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Altyazı-video senkron denetleyici")
+    ap = argparse.ArgumentParser(
+        prog="sub_handyman",
+        description="Altyazı-video senkron denetleyici: kaymayı ölçer, istersen düzeltir.")
     ap.add_argument("video", nargs="?", help="video dosyası veya film klasörü")
     ap.add_argument("--scan", metavar="DIR", help="klasördeki tüm video dosyalarını tara")
     ap.add_argument("--sub", help="altyazı dosyası (verilmezse video yanındaki .tr.srt)")
@@ -428,15 +474,23 @@ def main() -> int:
     ap.add_argument("--json", action="store_true", help="JSON çıktı")
     ap.add_argument("--backup-dir", default=None,
                     help="yedek klasörü (varsayılan: altyazının yanında .bak)")
-    ap.add_argument("--version", action="version", version=f"subtitle_sync {__version__}")
+    ap.add_argument("--lang", choices=("en", "tr"), default=None,
+                    help="output language (default: SUB_HANDYMAN_LANG or en)")
+    ap.add_argument("--version", action="version", version=f"sub_handyman {__version__}")
     args = ap.parse_args()
+
+    if args.lang:
+        global LANG
+        LANG = args.lang
+    elif LANG not in ("en", "tr"):
+        LANG = "en"
 
     if not args.video and not args.scan:
         ap.error("video dosyası ya da --scan <klasör> gerekli")
 
     targets = find_videos(Path(args.scan).expanduser()) if args.scan else [Path(args.video).expanduser()]
     if args.scan and not targets:
-        print("klasörde video bulunamadı")
+        print(t("no_videos"))
         return 2
 
     results, worst = [], 0
@@ -444,7 +498,7 @@ def main() -> int:
         try:
             r = analyze(v, Path(args.sub) if args.sub else None, args.audio)
         except Exception as e:  # ölçüm yapılamadı
-            r = {"video": str(v), "error": f"ölçüm hatası: {e}"}
+            r = {"video": str(v), "error": t("measure_error", err=e)}
         results.append(r)
 
         if not args.json:
@@ -456,7 +510,8 @@ def main() -> int:
                 go = args.yes
                 if not go:
                     try:
-                        go = input(f"    → {r['shift']:+.2f} sn kaydırılsın mı? [e/H] ").strip().lower().startswith("e")
+                        ans = input(t("confirm", shift=r["shift"])).strip().lower()
+                        go = ans.startswith(STRINGS["yes"].get(LANG, ("y",))[0])
                     except EOFError:
                         go = False
                 if go:
@@ -465,7 +520,7 @@ def main() -> int:
                               float(r.get("scale", 1.0)))
                     bak_path = (bak_dir / (Path(r["subtitle"]).name + ".bak")) if bak_dir \
                         else Path(str(r["subtitle"]) + ".bak")
-                    print(f"    ✔ uygulandı, yedek: {bak_path}")
+                    print(t("applied", path=bak_path))
                     worst = 1
         elif r.get("error"):
             worst = max(worst, 2)

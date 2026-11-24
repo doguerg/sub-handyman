@@ -1,11 +1,11 @@
-"""subtitle_sync.py birim testleri (ffmpeg gerektirmez)."""
+"""sub_handyman.py birim testleri (ffmpeg gerektirmez)."""
 import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import subtitle_sync as ss  # noqa: E402
+import sub_handyman as ss  # noqa: E402
 
 
 SRT_SAMPLE = """1
