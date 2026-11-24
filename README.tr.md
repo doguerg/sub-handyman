@@ -94,7 +94,7 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-Son komut `sub_handyman 1.2.0` yazmalı. Yazıyorsa hazırsın.
+Son komut `sub_handyman 1.2.1` yazmalı. Yazıyorsa hazırsın.
 
 Her klasörden çalıştırmak istersen PATH'e bağla:
 

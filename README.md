@@ -93,7 +93,7 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-The last command should print `sub_handyman 1.2.0`. If it does, you are ready.
+The last command should print `sub_handyman 1.2.1`. If it does, you are ready.
 
 If you want to run it from any folder, link it into your PATH:
 
