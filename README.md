@@ -91,7 +91,7 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-The last line should print `sub_handyman 1.1.0`. If it does, you are done.
+The last line should print `sub_handyman 1.1.1`. If it does, you are done.
 
 Optionally put it on `PATH` so you can call `sub_handyman` from anywhere:
 
@@ -212,7 +212,7 @@ The video file is never modified, and nothing else on disk is touched.
 | `at zero` | The same score with no correction. Compare it with `match`: if the two are nearly equal, the file was already fine. |
 | `F1` | The balanced score the scan maximises. Lower than `match` when a translated subtitle merges or splits lines, which is expected. |
 | `reference` | What the measurement was based on. Embedded or sibling text is reliable; `audio` is a fallback. |
-| `regions` | Offset measured in the first, middle and last third. Equal values mean a constant delay. |
+| `regions` | Offset measured in the first, middle and last third. Equal values mean a constant delay. A `?` means that third had too few cues (under 10) to measure. |
 
 ### Thresholds, and why they sit where they do
 
@@ -479,7 +479,7 @@ anything.
 python3 -m unittest discover -s tests -v
 ```
 
-19 tests, no video and no ffmpeg required. They cover SRT parsing (BOM, CRLF,
+20 tests, no video and no ffmpeg required. They cover SRT parsing (BOM, CRLF,
 garbage input, 2/3/4-digit fractions), timestamp formatting and clamping, offset
 recovery at several magnitudes including fractional values, frame-rate scale
 detection, region stability, silence-detection parsing, CP1254 round-trip, and

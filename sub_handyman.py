@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 
 # ---------------------------------------------------------------- i18n
 # CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
@@ -119,7 +119,9 @@ def parse_srt(path: Path) -> list[tuple[float, float]]:
 
 # ------------------------------------------------------------- ffmpeg/ffprobe
 def _run(cmd: list[str], binary: bool = False):
-    p = subprocess.run(cmd, capture_output=True)
+    # stdin=DEVNULL şart: ffmpeg stdin'i okur ve `--fix` onayına boruyla gelen
+    # cevabı (yes | sub_handyman --fix) yutup onayı sessizce iptal ettirir
+    p = subprocess.run(cmd, capture_output=True, stdin=subprocess.DEVNULL)
     if p.returncode != 0:
         raise RuntimeError((p.stderr or b"").decode("utf-8", "replace")[:400].strip()
                            or f"komut başarısız: {' '.join(cmd[:3])}")
@@ -182,7 +184,7 @@ def audio_speech_intervals(video: Path, duration: float,
     """
     p = subprocess.run(["ffmpeg", "-v", "info", "-nostats", "-i", str(video), "-map", "0:a:0",
                         "-af", f"silencedetect=noise={noise_db}dB:d={min_silence}",
-                        "-f", "null", "-"], capture_output=True)
+                        "-f", "null", "-"], capture_output=True, stdin=subprocess.DEVNULL)
     log = (p.stderr or b"").decode("utf-8", "replace")
     if p.returncode != 0:
         raise RuntimeError("ses taranamadı: " + (log.strip().splitlines() or ["bilinmeyen hata"])[-1][:200])

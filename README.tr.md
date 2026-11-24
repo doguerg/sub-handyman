@@ -95,7 +95,7 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-Son satır `sub_handyman 1.1.0` yazmalı. Yazıyorsa kurulum bitti.
+Son satır `sub_handyman 1.1.1` yazmalı. Yazıyorsa kurulum bitti.
 
 İstersen `PATH`'e ekle, her yerden `sub_handyman` diye çağır:
 
@@ -213,7 +213,7 @@ Video dosyası hiçbir zaman değişmez, diskte başka hiçbir şeye dokunulmaz.
 | `at zero` | Düzeltme yapılmadan aynı puan. `match` ile karşılaştır: ikisi birbirine yakınsa dosya zaten iyiydi. |
 | `F1` | Taramanın büyüttüğü dengeli puan. Çeviri altyazısı satır birleştirip böldüğünde `match`'ten düşük çıkar, bu normaldir. |
 | `reference` | Ölçümün neye dayandığı. Gömülü ya da yan dosya metni güvenilir; `audio` yedek yoldur. |
-| `regions` | İlk, orta ve son üçte birde ölçülen kayma. Eşit değerler sabit gecikme demek. |
+| `regions` | İlk, orta ve son üçte birde ölçülen kayma. Eşit değerler sabit gecikme demek. `?` o üçte birde ölçüm için yeterli replik (10'dan az) olmadığını gösterir. |
 
 ### Eşikler ve neden orada durdukları
 
@@ -475,7 +475,7 @@ Bir noktada emin değilsen `--fix` vermeden çalıştır. Ölçüm hiçbir şeyi
 python3 -m unittest discover -s tests -v
 ```
 
-19 test var, video ve ffmpeg gerekmiyor. SRT ayrıştırma (BOM, CRLF, bozuk girdi,
+20 test var, video ve ffmpeg gerekmiyor. SRT ayrıştırma (BOM, CRLF, bozuk girdi,
 2/3/4 haneli kesirler), zaman damgası biçimleme ve kırpma, kesirli değerler
 dahil birkaç büyüklükte kayma kurtarma, fps ölçek tespiti, bölge tutarlılığı,
 sessizlik tespiti ayrıştırma, CP1254 gidiş-dönüş ve zor dosya adlarıyla keşif

@@ -75,6 +75,22 @@ class TimestampTests(unittest.TestCase):
                 self.assertAlmostEqual(ss._ts_to_sec(ss.TS_RE.search(ts)), expected, places=3)
 
 
+class SubprocessTests(unittest.TestCase):
+    def test_ffmpeg_never_inherits_stdin(self):
+        """ffmpeg stdin'i okur; miras alırsa `yes | ... --fix` onayını yutar."""
+        from unittest import mock
+
+        with mock.patch("subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0, stdout=b"")
+            ss._run(["ffprobe", "-version"], binary=True)
+        self.assertIs(run.call_args.kwargs.get("stdin"), ss.subprocess.DEVNULL)
+
+        with mock.patch("subprocess.run") as run:
+            run.return_value = mock.Mock(returncode=0, stderr=b"")
+            ss.audio_speech_intervals(Path("x.mkv"), 10.0)
+        self.assertIs(run.call_args.kwargs.get("stdin"), ss.subprocess.DEVNULL)
+
+
 class SilenceDetectTests(unittest.TestCase):
     def test_leading_sound_does_not_shift_intervals(self):
         # dosya sesle başlıyor: ilk silence_end, silence_start olmadan gelir
