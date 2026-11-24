@@ -75,6 +75,22 @@ class TimestampTests(unittest.TestCase):
                 self.assertAlmostEqual(ss._ts_to_sec(ss.TS_RE.search(ts)), expected, places=3)
 
 
+class ReportTests(unittest.TestCase):
+    def test_report_uses_plain_labels(self):
+        r = ss.measure(make_cues(seed=3), make_cues(seed=3),
+                       max(b for _, b in make_cues(seed=3)) + 30)
+        r.update({"video": "v.mkv", "subtitle": "v.tr.srt", "lines": 42,
+                  "compared_with": "subtitle track inside the video (stream 2)",
+                  "needs_fix": False, "aligned": True})
+        text = ss.fmt_report(r)
+        self.assertIn("offset", text)
+        self.assertIn("overlap", text)
+        self.assertIn("checks (start/middle/end)", text)
+        # kısaltma ve kendi uydurduğum terimler insan çıktısında görünmemeli
+        for banned in ("F1", "regions", "match_at_zero", "sibling"):
+            self.assertNotIn(banned, text)
+
+
 class SubprocessTests(unittest.TestCase):
     def test_ffmpeg_never_inherits_stdin(self):
         """ffmpeg stdin'i okur; miras alırsa `yes | ... --fix` onayını yutar."""
@@ -171,30 +187,30 @@ class MeasureTests(unittest.TestCase):
             cand = [(a + injected, b + injected) for a, b in ref]
             res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
             with self.subTest(injected=injected):
-                self.assertAlmostEqual(res["shift"], -injected, delta=0.15)
-                self.assertGreater(res["match"], 0.95)
+                self.assertAlmostEqual(res["offset"], -injected, delta=0.15)
+                self.assertGreater(res["overlap"], 0.95)
 
     def test_identity_scores_high(self):
         ref = make_cues()
         res = ss.measure(ref, ref, max(b for _, b in ref) + 30)
-        self.assertAlmostEqual(res["shift"], 0.0, delta=0.1)
-        self.assertGreaterEqual(res["match"], 0.95)
-        self.assertAlmostEqual(res["scale"], 1.0, places=5)
-        self.assertIsNotNone(res["region_spread"])
-        self.assertLessEqual(res["region_spread"], 1.0)
+        self.assertAlmostEqual(res["offset"], 0.0, delta=0.1)
+        self.assertGreaterEqual(res["overlap"], 0.95)
+        self.assertAlmostEqual(res["speed"], 1.0, places=5)
+        self.assertIsNotNone(res["checks_apart"])
+        self.assertLessEqual(res["checks_apart"], 1.0)
 
     def test_detects_fps_scale(self):
         ref = make_cues(count=400, seed=11)
         cand = [(a * (25 / 23.976), b * (25 / 23.976)) for a, b in ref]
         res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
         # ölçek 25/23.976'ya yakın bulunmalı (sabit kayma bu sapmayı taşıyamaz)
-        self.assertGreater(abs(res["scale"] - 1.0), 0.02)
+        self.assertGreater(abs(res["speed"] - 1.0), 0.02)
 
     def test_constant_shift_is_not_mistaken_for_scale(self):
         ref = make_cues(count=300, seed=5)
         cand = [(a + 3.4, b + 3.4) for a, b in ref]
         res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
-        self.assertAlmostEqual(res["scale"], 1.0, places=5)
+        self.assertAlmostEqual(res["speed"], 1.0, places=5)
 
 
 class DiscoveryTests(unittest.TestCase):

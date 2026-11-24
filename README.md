@@ -1,22 +1,23 @@
 # sub-handyman
 
-**Replace guesswork with a measurement when subtitles are out of sync.**
+**Find out how far a subtitle is off, and fix it, without opening an editor.**
 
-`sub-handyman` compares a video with its external subtitle, reports how far the
-timing is off, decides whether the drift is a constant delay or a frame-rate
-mismatch, and rewrites the subtitle timings to match. No re-encoding, no GUI, no
-third-party Python packages: one file, standard library only.
+`sub-handyman` compares a video with the subtitle file next to it, tells you how
+many seconds the subtitle is off, works out whether one simple shift is enough or
+whether the subtitle was timed for a different frame rate, and rewrites the
+timings if you want it to. No re-encoding, no window to click through, no Python
+packages to install.
 
 ```console
 $ sub_handyman movie.mkv
 🔧 movie
-    subtitle: movie.tr.srt (1245 cues)
-    offset: -5.30s · match: 98.4% (at zero 84.4%) · F1 93.5%
-    reference: embedded subtitle (stream 2)
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    subtitle: movie.tr.srt (1245 lines)
+    offset: -5.30s · overlap: 98.4% (unchanged: 84.4%)
+    compared with: subtitle track inside the video (stream 2)
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 
 $ sub_handyman movie.mkv --fix --yes
-    applied, backup: movie.tr.srt.bak
+    done, backup: movie.tr.srt.bak
 ```
 
 Türkçe doküman: [README.tr.md](README.tr.md)
@@ -25,54 +26,55 @@ Türkçe doküman: [README.tr.md](README.tr.md)
 
 ## Contents
 
-1. [Why this exists](#why-this-exists)
-2. [Requirements](#requirements)
+1. [What it is for](#what-it-is-for)
+2. [Before you start](#before-you-start)
 3. [Install](#install)
-4. [First run, step by step](#first-run-step-by-step)
-5. [Reading the output](#reading-the-output)
-6. [How it works](#how-it-works)
-7. [Command reference](#command-reference)
-8. [Recipes](#recipes)
-9. [Performance](#performance)
-10. [Limitations](#limitations)
-11. [Troubleshooting](#troubleshooting)
+4. [Your first fix, step by step](#your-first-fix-step-by-step)
+5. [What the report says](#what-the-report-says)
+6. [How it decides](#how-it-decides)
+7. [All options](#all-options)
+8. [Everyday uses](#everyday-uses)
+9. [How long it takes](#how-long-it-takes)
+10. [What it cannot do](#what-it-cannot-do)
+11. [When something goes wrong](#when-something-goes-wrong)
 12. [Tests](#tests)
 13. [License](#license)
 
-## Why this exists
+## What it is for
 
-Subtitles are usually translated against a *different release* of the same film.
-Ten extra seconds of studio logo at the front, or a different frame rate, and
-every line lands in the wrong place. Players can nudge the delay by hand, but
-only for that one viewing: the file stays wrong, and the next device starts from
-zero again.
+A subtitle is usually translated for a *different release* of the same film. One
+release starts with ten seconds of studio logo, another does not. One runs at 24
+frames per second, another at 25. Either way the words appear at the wrong
+moment, from the first minute to the last.
 
-Good tools already solve parts of this, so this one had to earn its place.
-`ffsubsync` pulls in numpy and a dependency chain; `alass` is a compiled C++
-binary. `sub-handyman` is a single readable file, and it answers a second
-question most tools skip: *is a constant shift even the right model?*
+Most players let you drag the delay by hand. That helps for one evening only: the
+file on disk stays wrong, and the next device you watch on starts again from
+zero.
 
-When the answer is no, it says so instead of writing a plausible-looking wrong
-fix.
+Two things exist already and are good: `ffsubsync`, which needs numpy and a stack
+of dependencies, and `alass`, a compiled binary. This tool is one readable Python
+file with no dependencies, and it answers a question the others skip: **is a
+single shift actually the right fix?** When the answer is no, it says so instead
+of writing a wrong change that looks plausible.
 
-## Requirements
+## Before you start
 
 | | |
 | --- | --- |
-| Python | 3.10 or newer (uses `X \| Y` type unions) |
-| ffmpeg | `ffmpeg` **and** `ffprobe` on `PATH` |
-| Disk | no extra space beyond a `.bak` copy of the subtitle |
-| Network | none: it never calls an API or a subtitle site |
+| Python | 3.10 or newer |
+| ffmpeg | both `ffmpeg` and `ffprobe` on the PATH |
+| Disk space | none, apart from a `.bak` copy of the subtitle |
+| Internet | not needed, it never contacts anything |
 
-Check both before anything else:
+Check the first two:
 
 ```bash
-python3 --version            # expect 3.10 or newer
+python3 --version            # 3.10 or newer
 ffmpeg -version  | head -1
 ffprobe -version | head -1
 ```
 
-Install ffmpeg:
+If ffmpeg is missing:
 
 ```bash
 sudo apt install ffmpeg      # Debian, Ubuntu, Raspberry Pi OS
@@ -80,7 +82,7 @@ brew install ffmpeg          # macOS
 winget install Gyan.FFmpeg   # Windows
 ```
 
-No virtualenv is needed and there is nothing to `pip install`.
+There is no virtual environment to create and nothing to install with pip.
 
 ## Install
 
@@ -91,23 +93,23 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-The last line should print `sub_handyman 1.1.1`. If it does, you are done.
+The last command should print `sub_handyman 1.2.0`. If it does, you are ready.
 
-Optionally put it on `PATH` so you can call `sub_handyman` from anywhere:
+If you want to run it from any folder, link it into your PATH:
 
 ```bash
 sudo ln -s "$PWD/sub_handyman.py" /usr/local/bin/sub_handyman
 sub_handyman --version
 ```
 
-On Windows, use `python sub_handyman.py` wherever this document shows
+On Windows, write `python sub_handyman.py` wherever this page shows
 `sub_handyman`.
 
-## First run, step by step
+## Your first fix, step by step
 
-This is the entire workflow, in order. Nothing is written until step 5.
+Seven steps. Nothing is written to disk until step 5.
 
-### 1. Put the video and the subtitle in one folder
+### 1. Keep the video and the subtitle in the same folder
 
 ```
 Movies/
@@ -116,240 +118,244 @@ Movies/
     └── Some Movie.tr.srt      <- the subtitle you want to fix
 ```
 
-The names do not have to match exactly. The tool matches on the *start* of the
-filename, so `Some Movie.mkv` finds `Some Movie.tr.srt`. Keeping the subtitle
-named after the video is still the sane default: it removes ambiguity when a
-folder holds several language files.
+The names do not have to be identical. The tool looks for subtitle files that
+begin with the same name as the video, so `Some Movie.mkv` finds
+`Some Movie.tr.srt`. Naming the subtitle after the video is still the habit worth
+having, because it removes doubt when a folder holds several languages.
 
-### 2. Measure, do not fix yet
+### 2. Measure first, change nothing
 
 ```bash
 python3 sub_handyman.py "Movies/Some Movie/Some Movie.mkv"
 ```
 
-This only reads. It picks a reference, scans for the offset, prints a report and
-exits. Five seconds to half a minute, depending on which reference it found.
+This command only reads. It chooses something to compare against, searches for
+the offset, prints a report and stops. It takes five seconds to half a minute,
+depending on what it compared against.
 
-If you are unsure about anything, stop here. A measurement never modifies a
-file.
+If you are unsure at any point, stop here. Measuring never changes a file.
 
-### 3. Read the first character of the report
+### 3. Look at the first character of the report
 
-| Mark | Meaning | What to do |
+| Mark | What it means | What to do |
 | --- | --- | --- |
-| `✅` | Aligned | Nothing. Leave the file alone. |
-| `🔧` | A fix is available | Go to step 4. |
-| `❔` | Not trustworthy | Stop. See [Troubleshooting](#troubleshooting) before touching the file. |
-| `⚠️ name: …` | Measurement failed | Read the message. Usually a missing subtitle or an unreadable video. |
+| `✅` | The subtitle already fits | Nothing. Leave the file alone. |
+| `🔧` | A shift would help | Go to step 4. |
+| `❔` | The tool is not sure | Stop. Read [When something goes wrong](#when-something-goes-wrong) first. |
+| `⚠️ name: …` | It could not measure | Read the message. Usually the subtitle is missing or the video cannot be read. |
 
-### 4. Confirm the number makes sense
+### 4. Check that the number makes sense
 
-The report lists three offsets, measured in the first, middle and last third of
-the film:
+The report measures the offset three times: near the start, in the middle and
+near the end.
 
 ```
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 ```
 
-All three agree means the drift is a constant delay, and one shift fixes it.
-That is the common case.
+If all three agree, the subtitle is simply late everywhere and one shift fixes
+the whole film. This is the usual case.
 
-If they differ by more than about a second, the tool adds a `⚠️` warning: the
-file is not simply late, and a single shift will not cure it. Do not apply.
+If they differ by more than about a second, the tool adds a `⚠️` line. That means
+the subtitle is not just late, and a single shift will not help. Do not apply it.
 
-### 5. Apply it
+A `?` instead of a number means that part of the film had fewer than ten lines,
+so there was nothing to measure there.
+
+### 5. Apply the shift
 
 ```bash
 python3 sub_handyman.py "Movies/Some Movie/Some Movie.mkv" --fix
 ```
 
-With `--fix` the tool asks before touching anything:
+With `--fix` it asks before touching anything:
 
 ```
     → shift by -5.30s? [y/N]
 ```
 
-Answer `y`. It copies the subtitle to `.bak`, then rewrites the timings in
-place. For scripts and batch runs, add `--yes` to skip the question:
+Answer `y`. It saves a copy as `.bak`, then rewrites the timings in the same
+file. For scripts and batch runs, add `--yes` so it does not ask:
 
 ```bash
 python3 sub_handyman.py "Movies/Some Movie/Some Movie.mkv" --fix --yes
 ```
 
-### 6. Verify in your player
+### 6. Check in your player
 
-Close and reopen the player. If the subtitle is served by a media server
-(Jellyfin, Plex, Emby), also close and reopen the item: an open session can keep
-the old subtitle text cached even though the file on disk is already correct.
+Close the player and open the film again. If the subtitle comes from a media
+server (Jellyfin, Plex, Emby), close and reopen the film there too: a session
+that is already open can keep showing the old subtitle even though the file on
+disk is already correct.
 
-If it still looks late, the file is fine and the player cached it. Force a
-refresh. Do not run `--fix` a second time.
+If it still looks late, the file is fine and the player is showing a cached copy.
+Force a refresh. Do not run `--fix` a second time.
 
-### 7. Undo, if you have to
+### 7. Undo, if you need to
 
-Every run leaves the previous version beside the subtitle:
+Every run leaves the previous version next to the subtitle:
 
 ```bash
 mv "Movies/Some Movie/Some Movie.tr.srt.bak" "Movies/Some Movie/Some Movie.tr.srt"
 ```
 
-The video file is never modified, and nothing else on disk is touched.
+The video file is never changed, and nothing else on disk is touched.
 
-## Reading the output
+## What the report says
 
 ```
 🔧 movie
-    subtitle: movie.tr.srt (1245 cues)
-    offset: -5.30s · match: 98.4% (at zero 84.4%) · F1 93.5%
-    reference: embedded subtitle (stream 2)
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    subtitle: movie.tr.srt (1245 lines)
+    offset: -5.30s · overlap: 98.4% (unchanged: 84.4%)
+    compared with: subtitle track inside the video (stream 2)
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 ```
 
-| Line | Meaning |
+| Line | What it tells you |
 | --- | --- |
-| `offset` | Seconds to add to every cue. Negative means the subtitles arrive **late** and need to move earlier. |
-| `match` | How much of the subtitle lands on dialogue, 0-100%. This is the number the decision uses. |
-| `at zero` | The same score with no correction. Compare it with `match`: if the two are nearly equal, the file was already fine. |
-| `F1` | The balanced score the scan maximises. Lower than `match` when a translated subtitle merges or splits lines, which is expected. |
-| `reference` | What the measurement was based on. Embedded or sibling text is reliable; `audio` is a fallback. |
-| `regions` | Offset measured in the first, middle and last third. Equal values mean a constant delay. A `?` means that third had too few cues (under 10) to measure. |
+| `subtitle` | Which file was measured, and how many lines it has. |
+| `offset` | Seconds to add to every line. Minus means the subtitle appears **too late** and has to move earlier. |
+| `overlap` | Out of 100, how much of the subtitle sits exactly where there is speech. Higher is better. |
+| `unchanged` | The same score with no correction at all. Compare the two numbers: if they are close, the file was already fine and there is nothing to gain. |
+| `compared with` | What the subtitle was measured against. A subtitle track inside the video, or another subtitle file in the folder, gives the most reliable answer. Sound is the fallback and is less exact. |
+| `checks` | The offset measured near the start, the middle and the end. Three similar numbers mean one shift is enough. |
 
-### Thresholds, and why they sit where they do
+### The two cut-offs
 
-| Condition | Verdict |
+| Situation | What the tool says |
 | --- | --- |
-| `match` ≥ 90% and offset under 0.35 s | `✅` aligned |
-| `match` ≥ 55% with a real offset | `🔧` fix available |
-| `match` < 55% | `❔` do not trust |
+| `overlap` is 90% or more, and the offset is under 0.35 s | `✅` leave it alone |
+| `overlap` is 55% or more, and the offset is real | `🔧` it can be fixed |
+| `overlap` is under 55% | `❔` do not trust it |
 
-**0.35 s** is the no-op threshold. Subtitle guidelines tolerate about four frames
-(≈0.16 s) of error. Below a third of a second nobody notices, and rewriting a
-file is more risk than gain.
+**Why 0.35 seconds?** Subtitle guidelines aim to keep errors under about four
+frames, which is roughly 0.16 s. Below a third of a second nobody notices, and
+rewriting a file is then more risk than benefit.
 
-**55%** is the floor for acting. Translated subtitles merge and split cues, so a
-`match` in the 80-90% band is normal and 98% is excellent. Much below half means
-the two files probably do not describe the same cut, and the tool refuses to
-guess.
+**Why 55%?** A translation merges and splits lines, so it never lines up with the
+original word for word. Somewhere between 80% and 90% is normal, and 98% is very
+good. Below half the two files are probably not describing the same version of
+the film, and the tool refuses to guess.
 
-## How it works
+## How it decides
 
-### 1. Pick a reference
+### 1. It needs something to compare against
 
-The reference is what the candidate subtitle is aligned *against*, tried in this
-order:
+In this order:
 
-| # | Reference | When it applies |
+| # | Compared with | When this happens |
 | --- | --- | --- |
-| 1 | Embedded subtitle track in the video | Most muxed releases carry an English track |
-| 2 | Sibling `*.en.srt` / `*.eng.srt` beside the video | `mp4` / web-dl files with no subtitle stream |
-| 3 | Audio: speech intervals from `ffmpeg silencedetect` | No text reference at all — last resort |
+| 1 | The subtitle track inside the video | Most released files carry an English track |
+| 2 | The English subtitle file in the same folder | `mp4` files and web downloads often have no track inside |
+| 3 | The sound: when speech starts and stops | Only when there is no text anywhere; the least exact option |
 
-The reference becomes a boolean timeline at 0.1 s resolution: "is anybody talking
-here?" Each candidate cue is scored by how much of its duration lands on that
-timeline.
+That comparison becomes a simple timeline: here somebody is talking, here nobody
+is. Then every line of your subtitle is asked one question: does it sit on a
+place where somebody talks?
 
-### 2. Scan the offset
+### 2. It tries every plausible offset
 
-The candidate slides from -25 s to +25 s in 0.1 s steps, then gets refined to
-0.02 s around the best value. During the coarse pass the reference mask is
-dilated by 0.5 s, so cue boundaries that differ by a frame or two do not punish
-an otherwise correct alignment.
+The subtitle is shifted from -25 to +25 seconds in steps of a tenth of a second,
+then refined to two hundredths of a second around the best result. At the coarse
+stage the "somebody is talking" timeline is widened by half a second, so lines
+that start a frame or two apart do not spoil an otherwise correct match.
 
-### 3. Score with F1, decide with precision
+### 3. It avoids a trap that catches most tools
 
-Searching on precision alone is a trap, and it caught the first version of this
-tool. When the reference is dense in one stretch of the film, sliding the
-subtitle into that stretch raises precision even though nothing matches. In a
-synthetic test the "best" offset came out as **+152 s**.
+Judging a shift only by "how much of the subtitle sits on speech" is misleading.
+If one part of the film has almost continuous dialogue, pushing the subtitle into
+that part raises the score even when nothing matches. The first version of this
+tool did exactly that and reported an offset of **+152 seconds** on a test file.
 
-So the scan maximises **F1**, the harmonic mean of precision and recall, which
-punishes both sliding into a dense region and covering only half the dialogue.
-The final *decision* uses **precision**, because translated subtitles
-legitimately split and merge cues: two source lines can become one translated
-line, so recall can never reach 1.0 even with perfect timing.
+So the search looks at two things at once: how much of the subtitle sits on
+speech, and how much of the speech is covered by the subtitle. A shift that
+satisfies only one of them scores badly.
 
-Recall's denominator is computed from the undilated mask, otherwise a perfect
-alignment would score well below 100%.
+The final yes-or-no answer uses the first number alone, because a translation
+never covers every single line of the original. Two English lines can become one
+translated line, so full coverage is impossible even when the timing is perfect.
 
-### 4. Constant delay, or frame-rate mismatch?
+### 4. One shift, or a different frame rate?
 
-A frame-rate mismatch is not a shift. The error grows linearly: zero at the
-start, tens of seconds by the end. Nudging cannot fix it.
+These are two different problems. If the subtitle was timed for 25 frames per
+second and your film runs at 24, the error grows the further you watch: nothing
+at the start, twenty seconds by the end. Sliding the whole file cannot fix that.
 
-The tool measures the offset separately in the first, middle and last third of
-the film:
+That is why the tool measures three times, near the start, the middle and the
+end:
 
-- all three agree → constant delay, apply it
-- they diverge → try known ratios (24000/1001, 24, 25); if one scores clearly
-  better, apply **scale + shift** together
-- still unconvincing → say so instead of writing a wrong fix
+- all three agree: one shift is the answer
+- they do not agree: it tries the usual frame-rate ratios and, if one is clearly
+  better, applies a speed correction on top of the shift
+- still unclear: it tells you instead of writing a wrong change
 
-### 5. Write it back
+### 5. What happens to your file
 
-`--fix` rewrites the timings in place and preserves the original formatting:
+`--fix` rewrites the timings and keeps the rest as it was:
 
-- UTF-8 BOM kept if present
-- CP1254 (Turkish Windows) files are detected and written back as CP1254
-- CRLF normalised to LF on write (every player accepts both)
-- a `.bak` (or `--backup-dir`) is written **before** the file is touched
-- cues clamped at `00:00:00` keep their duration rather than collapsing to zero
+- a UTF-8 byte-order mark is kept if the file had one
+- files saved in the older Turkish Windows encoding are detected and written
+  back the same way
+- Windows line endings become Unix line endings, which every player accepts
+- the `.bak` copy is written **before** the file is touched
+- a line pushed past 00:00:00 keeps its length instead of collapsing to nothing
 
-## Command reference
+## All options
 
 ```
 sub_handyman [VIDEO | --scan DIR] [options]
 ```
 
-| Option | Meaning |
+| Option | What it does |
 | --- | --- |
-| `VIDEO` | Video file, or a folder (searched recursively) |
-| `--scan DIR` | Walk a directory recursively (`mkv`, `mp4`, `m4v`, `avi`, `mov`, `webm`, `ts`) |
-| `--sub FILE` | Use this subtitle instead of auto-detection |
-| `--fix` | Apply the measured correction |
-| `--yes` | Skip the confirmation prompt (cron, scripts) |
-| `--audio` | Skip text references, go straight to the audio track |
-| `--json` | Machine-readable output (an array when `--scan` is used) |
-| `--backup-dir DIR` | Write `.bak` files here instead of beside the subtitle |
-| `--lang {en,tr}` | Output language (default: `SUB_HANDYMAN_LANG`, else `en`) |
-| `--version` | Print version |
+| `VIDEO` | A video file, or a folder (searched including subfolders) |
+| `--scan DIR` | Search a folder for videos: `mkv`, `mp4`, `m4v`, `avi`, `mov`, `webm`, `ts` |
+| `--sub FILE` | Use this subtitle instead of guessing |
+| `--fix` | Apply the measured shift |
+| `--yes` | Do not ask for confirmation |
+| `--audio` | Ignore text, compare against the sound |
+| `--json` | Print machine-readable output instead of a report |
+| `--backup-dir DIR` | Put `.bak` files in this folder instead of next to the subtitle |
+| `--lang {en,tr}` | Report language, English or Turkish |
+| `--version` | Print the version |
 
-### Subtitle auto-detection
+### Which subtitle it picks
 
-Given `Some Movie.mkv`, the tool looks for files in the same folder whose name
-starts with `Some Movie` and ends in `.srt`, and prefers Turkish ones (`.tr.`,
-`tr.srt`). For a reference it prefers English (`*.en.*`, `*.eng.*`). Use `--sub`
-when a folder holds several languages and detection picks the wrong one.
+Given `Some Movie.mkv`, it looks in the same folder for `.srt` files whose name
+starts with `Some Movie`. If several are there, Turkish ones win (`.tr.`,
+`tr.srt`). When comparing, it prefers English ones (`*.en.*`, `*.eng.*`). If it
+picks the wrong one, say which you want with `--sub`.
 
 ### Exit codes
 
 | Code | Meaning |
 | --- | --- |
-| `0` | Aligned (or measured clean), nothing to do |
-| `1` | A fix was applied, or is needed but `--fix` was not given |
-| `2` | Measurement failed (no subtitle, no reference, unreadable video) |
+| `0` | Nothing to do, the subtitle already fits |
+| `1` | A shift was applied, or was needed and `--fix` was not given |
+| `2` | It could not measure: no subtitle, nothing to compare with, unreadable video |
 
-The difference between "all good" and "drift found" is usually what you want to
-branch on:
+That is handy in scripts, where "all fine" and "needs attention" are what you
+actually branch on:
 
 ```bash
-python3 sub_handyman.py --scan /media/movies --json > report.json || echo "drift found"
+python3 sub_handyman.py --scan /media/movies --json > report.json || echo "needs attention"
 ```
 
 ### JSON output
 
 ```json
 {
-  "shift": -5.3,
-  "match": 0.984,
-  "match_at_zero": 0.844,
-  "f1": 0.935,
-  "scale": 1.0,
-  "regions": [-5.3, -5.3, -5.3],
-  "region_spread": 0.05,
-  "method": "embedded subtitle (stream 2)",
+  "offset": -5.3,
+  "overlap": 0.984,
+  "overlap_unchanged": 0.844,
+  "balance": 0.935,
+  "speed": 1.0,
+  "checks": [-5.3, -5.3, -5.3],
+  "checks_apart": 0.05,
+  "compared_with": "subtitle track inside the video (stream 2)",
   "video": "movie.mkv",
   "subtitle": "movie.tr.srt",
-  "cues": 1245,
+  "lines": 1245,
   "needs_fix": true,
   "aligned": false,
   "applied": true,
@@ -359,43 +365,46 @@ python3 sub_handyman.py --scan /media/movies --json > report.json || echo "drift
 
 | Field | Meaning |
 | --- | --- |
-| `shift` | Seconds added to every cue (negative = subtitles arrive late) |
-| `match` | Precision; `f1` is the score the scan optimised |
-| `match_at_zero` | Precision without touching the file |
-| `scale` | Multiplier applied to cue times before `shift` (1.0 = none) |
-| `regions` | Offset measured in the first/middle/last third |
-| `region_spread` | Max minus min of `regions`; above ~1.5 s the constant model is doubtful |
-| `needs_fix` | The match is good enough to act on, and a correction is pending |
-| `aligned` | High match and nothing to correct |
-| `applied` / `backup` | Present only when `--fix` actually rewrote the file |
+| `offset` | Seconds added to every line. Minus means the subtitle was late. |
+| `overlap` | Share of the subtitle that sits on speech, 0 to 1. |
+| `overlap_unchanged` | The same share with no correction. |
+| `balance` | The combined score the search used. Lower than `overlap` is normal for translated subtitles. |
+| `speed` | Speed correction applied before the shift. `1.0` means none. |
+| `checks` | Offset measured near the start, the middle and the end. |
+| `checks_apart` | How far apart those three numbers are. Above about 1.5 s, do not trust a single shift. |
+| `compared_with` | What the subtitle was measured against. |
+| `lines` | Number of lines in the subtitle. |
+| `needs_fix` | A shift is available and has not been applied yet. |
+| `aligned` | The subtitle already fits. |
+| `applied`, `backup` | Only present when `--fix` really rewrote the file. |
 
-`--scan` always returns an array, even when it finds a single video. A single
-`VIDEO` argument returns one object.
+`--scan` always returns a list, even when it finds one video. A single `VIDEO`
+returns one object.
 
-## Recipes
+## Everyday uses
 
-### Check a whole library before touching anything
+### Look through a whole folder before changing anything
 
 ```bash
 python3 sub_handyman.py --scan ~/Videos/Movies --json > report.json
 python3 - <<'PY'
 import json
-for r in json.load(open("report.json")):
-    if r.get("needs_fix"):
-        print(f"{r['subtitle']}: {r['shift']:+.2f}s (match {r['match']:.0%})")
+for item in json.load(open("report.json")):
+    if item.get("needs_fix"):
+        print(f"{item['subtitle']}: {item['offset']:+.2f}s (overlap {item['overlap']:.0%})")
 PY
 ```
 
-### Fix everything that is confidently off
+### Fix everything that is clearly off
 
 ```bash
 python3 sub_handyman.py --scan ~/Videos/Movies --fix --yes
 ```
 
-Anything reported as `❔` is skipped even when `--fix` is given: a confident
-wrong rewrite is worse than a known-bad subtitle.
+Anything marked `❔` is skipped even when `--fix` is given. A confident wrong
+change is worse than a subtitle you already know is bad.
 
-### Hook into a download pipeline
+### Run it after every download
 
 ```bash
 for f in "$download_dir"/*.mkv "$download_dir"/*.mp4; do
@@ -404,74 +413,74 @@ for f in "$download_dir"/*.mkv "$download_dir"/*.mp4; do
 done
 ```
 
-Cheap to run: with an embedded reference it reads only the subtitle stream, so
-the cost does not scale with file size.
+It is cheap: when the video carries a subtitle track, only that track is read, so
+the work does not grow with the size of the video.
 
-### Force the audio path
+### Compare against the sound
 
-For remuxes whose only text track is a commentary, or `mp4` files with a
-hardcoded dubtitle:
+For files whose only text track is a commentary, or `mp4` files with subtitles
+burned into the picture:
 
 ```bash
 python3 sub_handyman.py movie.mp4 --audio
 ```
 
-### Pick the subtitle by hand
+### Choose the subtitle yourself
 
-When a folder holds several languages and auto-detection guesses wrong:
+When a folder holds several languages and the guess is wrong:
 
 ```bash
 python3 sub_handyman.py movie.mkv --sub "movie.pt-BR.srt"
 ```
 
-### Turkish output
+### Turkish report
 
 ```bash
 export SUB_HANDYMAN_LANG=tr     # or: --lang tr
 ```
 
-## Performance
+## How long it takes
 
-Measured on a Raspberry Pi 5 (8 GB, NVMe) against a 15 GB 4K HEVC remux:
+Measured on a Raspberry Pi 5 (8 GB, NVMe) with a 15 GB 4K file:
 
-| Reference | Time | Note |
+| Compared with | Time | Why |
 | --- | --- | --- |
-| Embedded subtitle | ~20 s | ffmpeg extracts the subtitle stream only |
-| Sibling `.srt` | ~5 s | pure Python, no decode |
-| Audio (`--audio`) | 2-4 min | full audio pass through `silencedetect` |
+| Subtitle track inside the video | about 20 s | ffmpeg reads only the subtitle track |
+| English subtitle file in the folder | about 5 s | plain Python, nothing to decode |
+| The sound (`--audio`) | 2 to 4 min | the whole soundtrack has to be scanned |
 
-The scan itself is not the bottleneck; decoding is.
+The search itself is quick. Reading the video is what takes time.
 
-## Limitations
+## What it cannot do
 
-- Fixes timing, not translation. A bad translation stays bad.
-- Subtitles from a different cut (extended vs. theatrical, re-ordered scenes)
-  score low; the tool reports `❔` and refuses to guess.
-- The audio reference is noisy over music and effects. If a text reference
-  exists it is always preferred, and `--audio` is opt-in.
-- One subtitle per video per run. Batch mode picks the Turkish file, else the
-  first `.srt`.
-- `.ass`/`.ssa` can be *measured* via `--sub`, but only `.srt` timings are
-  rewritten.
-- Releases with variable frame rate and dropped frames can drift in a way
-  neither a shift nor a scale describes; the region check flags it, and from
-  there it is manual work.
+- It fixes timing, not translation. A bad translation stays bad.
+- If the subtitle belongs to a different version of the film (extended vs.
+  cinema, scenes in another order), the numbers come out low, it says `❔`, and it
+  will not guess.
+- The sound is a rough guide when music and effects are loud. A text comparison
+  is always preferred, and `--audio` is something you ask for.
+- One subtitle per video per run. In a folder it picks the Turkish file, or
+  otherwise the first `.srt`.
+- `.ass` and `.ssa` files can be measured with `--sub`, but only `.srt` timings
+  are rewritten.
+- Files with a variable frame rate and dropped frames can go out of step in a way
+  that neither a shift nor a speed correction describes. The three checks reveal
+  it, and then it is a manual job.
 
-## Troubleshooting
+## When something goes wrong
 
-| Symptom | Cause | What to do |
+| What you see | Why | What to do |
 | --- | --- | --- |
-| `no .srt next to the video` | Subtitle is named differently, or lives in another folder | Rename it after the video, or pass `--sub` |
-| `subtitle too short (n cues)` | Stub file, an ad, or a soundtrack listing | Wrong file: point `--sub` at the real subtitle |
-| `❔` on every film | Reference is the audio track and the mix is music-heavy | Check for an embedded subtitle track, or fetch a text reference |
-| Fix applied, still late in the player | Player or media server cached the old subtitle | Close and reopen the item; force a refresh |
-| `⚠️ region offsets disagree` | Different cut, or variable frame rate | Do not apply. Find a subtitle for the exact release |
-| `⚠️ frame-rate mismatch suspected` | 23.976 vs 24 vs 25 mismatch | `--fix` applies scale + shift; check the end of the film afterwards |
-| `measurement failed: …` | Missing ffmpeg, unreadable video, no audio stream | Read the message; check `ffmpeg -version` |
-| A script breaks on the JSON | `--scan` returns an array, a single file returns an object | Normalise before parsing, or always use `--scan` |
+| `no .srt next to the video` | The subtitle has another name, or sits in another folder | Name it after the video, or pass `--sub` |
+| `subtitle too short (3 lines)` | It is a stub, an advert or a track list | Point `--sub` at the real subtitle |
+| `❔` on every film | It fell back to the sound and the film is music-heavy | Check whether the video has a subtitle track; if not, find a text subtitle |
+| Fixed, but the player still shows it late | The player or server is showing a cached copy | Close and reopen the film |
+| `⚠️ checks at the start, middle and end disagree` | Different version of the film, or variable frame rate | Do not apply. Find a subtitle for the exact release |
+| `⚠️ timed for a different frame rate` | 23.976, 24 and 25 mixed up | `--fix` applies a speed correction too; check the last minutes afterwards |
+| `measurement failed: …` | ffmpeg missing, video unreadable, no sound track | Read the message, check `ffmpeg -version` |
+| A script breaks on the JSON | `--scan` returns a list, one file returns an object | Always use `--scan`, or handle both |
 
-If you are unsure at any point, run without `--fix`. Measurement never modifies
-anything.
+When in doubt, run without `--fix`. Measuring changes nothing.
 
 ## Tests
 
@@ -479,12 +488,13 @@ anything.
 python3 -m unittest discover -s tests -v
 ```
 
-20 tests, no video and no ffmpeg required. They cover SRT parsing (BOM, CRLF,
-garbage input, 2/3/4-digit fractions), timestamp formatting and clamping, offset
-recovery at several magnitudes including fractional values, frame-rate scale
-detection, region stability, silence-detection parsing, CP1254 round-trip, and
-file discovery with awkward filenames.
+21 tests. No video and no ffmpeg needed. They cover reading subtitle files (byte
+order marks, Windows line endings, broken input, timestamps with two, three or
+four decimals), writing timestamps and clamping them at zero, recovering known
+offsets including fractional ones, spotting a frame-rate difference, the three
+checks agreeing, parsing the sound scan, keeping the old Turkish encoding, finding
+files with awkward names, and the wording of the report.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).

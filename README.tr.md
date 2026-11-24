@@ -1,82 +1,81 @@
 # sub-handyman
 
-**Altyazı kaymasında tahmin yerine ölçüm.**
+**Altyazı ne kadar kaymış, ölç ve düzelt. Editör açmadan.**
 
-`sub-handyman` videoyu yanındaki altyazıyla karşılaştırır, zamanlamanın ne kadar
-kaydığını söyler, bunun sabit bir gecikme mi yoksa kare hızı (fps) uyuşmazlığı mı
-olduğuna karar verir ve altyazı zamanlarını buna göre yeniden yazar. Yeniden
-kodlama yok, arayüz yok, üçüncü parti Python paketi yok: tek dosya, sadece
-standart kütüphane.
+`sub-handyman` videoyu yanındaki altyazı dosyasıyla karşılaştırır, altyazının kaç
+saniye kaydığını söyler, tek bir kaydırmanın yetip yetmediğini ya da altyazının
+farklı bir kare hızına göre mi hazırlandığını çözer, istersen zamanları yeniden
+yazar. Yeniden kodlama yok, tıklanacak pencere yok, kurulacak Python paketi yok.
 
 ```console
 $ sub_handyman movie.mkv
 🔧 movie
-    subtitle: movie.tr.srt (1245 cues)
-    offset: -5.30s · match: 98.4% (at zero 84.4%) · F1 93.5%
-    reference: embedded subtitle (stream 2)
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    subtitle: movie.tr.srt (1245 lines)
+    offset: -5.30s · overlap: 98.4% (unchanged: 84.4%)
+    compared with: subtitle track inside the video (stream 2)
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 
 $ sub_handyman movie.mkv --fix --yes
-    applied, backup: movie.tr.srt.bak
+    done, backup: movie.tr.srt.bak
 ```
 
 English docs: [README.md](README.md)
 
-> Yukarıdaki örnek çıktı İngilizce arayüzle alındı. Türkçe arayüz için `--lang tr`
-> ekle ya da `export SUB_HANDYMAN_LANG=tr` yap.
+> Örnek çıktı İngilizce yazılmış; Türkçe rapor için `--lang tr` ekle ya da
+> `export SUB_HANDYMAN_LANG=tr` yap.
 
 ---
 
 ## İçindekiler
 
-1. [Neden var](#neden-var)
-2. [Gereken](#gereken)
+1. [Ne işe yarar](#ne-işe-yarar)
+2. [Başlamadan önce](#başlamadan-önce)
 3. [Kurulum](#kurulum)
-4. [İlk çalıştırma, adım adım](#i̇lk-çalıştırma-adım-adım)
-5. [Çıktıyı okumak](#çıktıyı-okumak)
-6. [Nasıl çalışıyor](#nasıl-çalışıyor)
-7. [Komut referansı](#komut-referansı)
-8. [Tarifler](#tarifler)
-9. [Başarım](#başarım)
-10. [Sınırlar](#sınırlar)
-11. [Sorun giderme](#sorun-giderme)
+4. [İlk düzeltme, adım adım](#i̇lk-düzeltme-adım-adım)
+5. [Rapor ne söylüyor](#rapor-ne-söylüyor)
+6. [Nasıl karar veriyor](#nasıl-karar-veriyor)
+7. [Bütün seçenekler](#bütün-seçenekler)
+8. [Günlük kullanım](#günlük-kullanım)
+9. [Ne kadar sürüyor](#ne-kadar-sürüyor)
+10. [Yapamadıkları](#yapamadıkları)
+11. [Bir şey ters giderse](#bir-şey-ters-giderse)
 12. [Testler](#testler)
 13. [Lisans](#lisans)
 
-## Neden var
+## Ne işe yarar
 
-Altyazı çevirileri çoğu zaman filmin **başka bir sürümü** üzerinden hazırlanır.
-Başta on saniye fazla stüdyo logosu, ya da farklı bir kare hızı, ve her replik
-yanlış yere düşer. Oynatıcıdan gecikmeyi elle kaydırabilirsin ama bu yalnızca o
-izleme için geçerli: dosya yanlış kalır, yeni cihazda iş yine baştan başlar.
+Altyazı çoğu zaman filmin **başka bir sürümü** için çevrilir. Bir sürümün başında
+on saniye stüdyo logosu vardır, diğerinde yok. Biri saniyede 24 kare oynar, öteki
+25. Her iki durumda da sözler yanlış anda görünür, ilk dakikadan son dakikaya
+kadar.
 
-Bu işin bir kısmını yapan araçlar zaten var, o yüzden bu aracın kendini
-kanıtlaması gerekti. `ffsubsync` numpy ve uzun bir bağımlılık zinciri getiriyor,
-`alass` derlenmiş bir C++ ikilisi. `sub-handyman` tek okunabilir dosya, bir de
-çoğu aracın atladığı ikinci soruyu soruyor: *sabit kayma gerçekten doğru model
-mi?*
+Çoğu oynatıcı gecikmeyi elle kaydırmaya izin verir. Bu yalnızca o akşam işe
+yarar: diskteki dosya yanlış kalır, başka cihazda yine sıfırdan başlarsın.
 
-Cevap hayırsa, akla yatkın görünen yanlış bir düzeltme yazmak yerine bunu
-söylüyor.
+Bu işi yapan iki iyi araç zaten var: `ffsubsync` numpy ve bir yığın bağımlılık
+istiyor, `alass` derlenmiş bir ikili. Bu araç tek okunabilir Python dosyası ve
+hiçbir bağımlılığı yok. Bir de ötekilerin atladığı soruyu soruyor: **tek bir
+kaydırma gerçekten doğru çözüm mü?** Cevap hayırsa, kulağa mantıklı gelen yanlış
+bir değişiklik yazmak yerine bunu söylüyor.
 
-## Gereken
+## Başlamadan önce
 
 | | |
 | --- | --- |
-| Python | 3.10 veya üstü (`X \| Y` tip birleşimi kullanılıyor) |
-| ffmpeg | `PATH` üzerinde `ffmpeg` **ve** `ffprobe` |
-| Disk | altyazının `.bak` kopyası dışında ek yer yok |
-| Ağ | yok: hiçbir API'ye ya da altyazı sitesine bağlanmaz |
+| Python | 3.10 ya da üstü |
+| ffmpeg | `ffmpeg` ve `ffprobe`, ikisi de PATH üzerinde |
+| Disk | altyazının `.bak` kopyası dışında yer gerekmiyor |
+| İnternet | gerekmiyor, hiçbir yere bağlanmıyor |
 
-Her şeyden önce ikisini de doğrula:
+İlk ikisini kontrol et:
 
 ```bash
-python3 --version            # 3.10 veya üstü bekleniyor
-ffmpeg  -version | head -1
+python3 --version            # 3.10 ya da üstü
+ffmpeg -version  | head -1
 ffprobe -version | head -1
 ```
 
-ffmpeg kurulumu:
+ffmpeg yoksa:
 
 ```bash
 sudo apt install ffmpeg      # Debian, Ubuntu, Raspberry Pi OS
@@ -84,7 +83,7 @@ brew install ffmpeg          # macOS
 winget install Gyan.FFmpeg   # Windows
 ```
 
-Sanal ortam gerekmiyor, `pip install` ile kurulacak bir şey yok.
+Sanal ortam kurmak gerekmiyor, pip ile kurulacak bir şey yok.
 
 ## Kurulum
 
@@ -95,20 +94,20 @@ chmod +x sub_handyman.py
 python3 sub_handyman.py --version
 ```
 
-Son satır `sub_handyman 1.1.1` yazmalı. Yazıyorsa kurulum bitti.
+Son komut `sub_handyman 1.2.0` yazmalı. Yazıyorsa hazırsın.
 
-İstersen `PATH`'e ekle, her yerden `sub_handyman` diye çağır:
+Her klasörden çalıştırmak istersen PATH'e bağla:
 
 ```bash
 sudo ln -s "$PWD/sub_handyman.py" /usr/local/bin/sub_handyman
 sub_handyman --version
 ```
 
-Windows'ta bu dokümandaki `sub_handyman` yerine `python sub_handyman.py` yaz.
+Windows'ta bu sayfadaki `sub_handyman` yerine `python sub_handyman.py` yaz.
 
-## İlk çalıştırma, adım adım
+## İlk düzeltme, adım adım
 
-Bütün akış sırayla aşağıda. 5. adıma kadar hiçbir şey yazılmaz.
+Yedi adım. 5. adıma kadar diske hiçbir şey yazılmaz.
 
 ### 1. Videoyu ve altyazıyı aynı klasöre koy
 
@@ -119,72 +118,75 @@ Filmler/
     └── Bir Film.tr.srt      <- düzeltmek istediğin altyazı
 ```
 
-Adların birebir aynı olması şart değil. Araç dosya adının *başına* bakıyor:
-`Bir Film.mkv`, `Bir Film.tr.srt` dosyasını bulur. Yine de altyazıyı videonun
-adıyla adlandırmak doğru varsayılan; klasörde birden çok dil varsa karışıklığı
-bu önler.
+Adların birebir aynı olması şart değil. Araç, adı videonun adıyla başlayan
+altyazı dosyalarına bakıyor; `Bir Film.mkv` dosyası `Bir Film.tr.srt` dosyasını
+bulur. Yine de altyazıyı videonun adıyla adlandırmak iyi bir alışkanlık, klasörde
+birkaç dil varsa karışıklığı bu önler.
 
-### 2. Ölç, henüz düzeltme
+### 2. Önce ölç, hiçbir şeyi değiştirme
 
 ```bash
 python3 sub_handyman.py "Filmler/Bir Film/Bir Film.mkv"
 ```
 
-Bu komut yalnız okur. Referansı seçer, kaymayı tarar, raporu basar ve çıkar.
-Hangi referansı bulduğuna göre beş saniye ile yarım dakika arası sürer.
+Bu komut yalnız okur. Karşılaştıracak bir şey seçer, kaymayı arar, raporu basar ve
+durur. Neyle karşılaştırdığına göre beş saniye ile yarım dakika arası sürer.
 
-Bir noktada emin değilsen burada dur. Ölçüm hiçbir dosyayı değiştirmez.
+Bir noktada emin değilsen burada dur. Ölçmek hiçbir dosyayı değiştirmez.
 
 ### 3. Raporun ilk karakterine bak
 
 | İşaret | Anlamı | Ne yapmalı |
 | --- | --- | --- |
-| `✅` | Hizalı | Hiçbir şey. Dosyaya dokunma. |
-| `🔧` | Düzeltme var | 4. adıma geç. |
-| `❔` | Güvenilir değil | Dur. Dosyaya dokunmadan önce [Sorun giderme](#sorun-giderme) bölümüne bak. |
-| `⚠️ ad: …` | Ölçüm başarısız | Mesajı oku. Genelde altyazı yok ya da video okunamıyor. |
+| `✅` | Altyazı zaten oturuyor | Hiçbir şey. Dosyaya dokunma. |
+| `🔧` | Kaydırma işe yarar | 4. adıma geç. |
+| `❔` | Araç emin değil | Dur. Önce [Bir şey ters giderse](#bir-şey-ters-giderse) bölümünü oku. |
+| `⚠️ ad: …` | Ölçemedi | Mesajı oku. Genelde altyazı yok ya da video okunamıyor. |
 
-### 4. Sayının mantıklı olduğunu doğrula
+### 4. Sayının mantıklı olduğunu kontrol et
 
-Rapor üç kayma değeri verir: filmin ilk, orta ve son üçte birinde ölçülen.
+Rapor kaymayı üç yerde ölçer: filmin başında, ortasında ve sonunda.
 
 ```
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 ```
 
-Üçü de aynıysa kayma sabit bir gecikmedir ve tek kaydırma işi bitirir. Sık
-karşılaşılan durum budur.
+Üçü de aynıysa altyazı her yerde aynı kadar geç kalmış demektir ve tek kaydırma
+bütün filmi düzeltir. Sık görülen durum bu.
 
-Aralarında yaklaşık bir saniyeden fazla fark varsa araç bir `⚠️` uyarısı ekler:
-dosya sadece geç kalmamış, tek kaydırma yetmez. Uygulama.
+Aralarında bir saniyeden fazla fark varsa araç bir `⚠️` satırı ekler. O zaman
+altyazı sadece geç kalmamış, tek kaydırma yetmez. Uygulama.
 
-### 5. Uygula
+Sayı yerine `?` görürsen o bölümde on satırdan az replik var, ölçülecek bir şey
+yok demektir.
+
+### 5. Kaydırmayı uygula
 
 ```bash
 python3 sub_handyman.py "Filmler/Bir Film/Bir Film.mkv" --fix
 ```
 
-`--fix` verildiğinde araç dokunmadan önce sorar:
+`--fix` verildiğinde dokunmadan önce sorar:
 
 ```
     → shift by -5.30s? [y/N]
 ```
 
-`y` yaz. Altyazıyı `.bak` olarak kopyalar, sonra zamanları yerinde yeniden
-yazar. Script ve toplu işlerde soruyu atlamak için `--yes` ekle:
+`y` yaz. Altyazıyı `.bak` olarak saklar, sonra zamanları aynı dosyada yeniden
+yazar. Script ve toplu işlerde soru sormasın diye `--yes` ekle:
 
 ```bash
 python3 sub_handyman.py "Filmler/Bir Film/Bir Film.mkv" --fix --yes
 ```
 
-### 6. Oynatıcıda doğrula
+### 6. Oynatıcıda kontrol et
 
-Oynatıcıyı kapat, yeniden aç. Altyazı bir medya sunucusundan geliyorsa (Jellyfin,
-Plex, Emby) içeriği de kapat-aç: açık kalan oturum, dosya diskte doğru olmasına
-rağmen eski altyazı metnini bellekte tutabilir.
+Oynatıcıyı kapat, filmi yeniden aç. Altyazı bir medya sunucusundan geliyorsa
+(Jellyfin, Plex, Emby) orada da filmi kapat-aç: açık kalan oturum, dosya diskte
+doğru olmasına rağmen eski altyazıyı göstermeye devam edebilir.
 
-Hâlâ geç geliyorsa dosya doğru, oynatıcı önbellekte tutuyor. Yenilemeye zorla.
-`--fix`'i ikinci kez çalıştırma.
+Hâlâ geç geliyorsa dosya doğru, oynatıcı eski kopyayı gösteriyor. Yenilemeye
+zorla. `--fix` komutunu ikinci kez çalıştırma.
 
 ### 7. Gerekirse geri al
 
@@ -196,158 +198,161 @@ mv "Filmler/Bir Film/Bir Film.tr.srt.bak" "Filmler/Bir Film/Bir Film.tr.srt"
 
 Video dosyası hiçbir zaman değişmez, diskte başka hiçbir şeye dokunulmaz.
 
-## Çıktıyı okumak
+## Rapor ne söylüyor
 
 ```
 🔧 movie
-    subtitle: movie.tr.srt (1245 cues)
-    offset: -5.30s · match: 98.4% (at zero 84.4%) · F1 93.5%
-    reference: embedded subtitle (stream 2)
-    regions (start/mid/end): -5.30 / -5.30 / -5.30
+    subtitle: movie.tr.srt (1245 lines)
+    offset: -5.30s · overlap: 98.4% (unchanged: 84.4%)
+    compared with: subtitle track inside the video (stream 2)
+    checks (start/middle/end): -5.30 / -5.30 / -5.30
 ```
 
-| Satır | Anlamı |
+| Satır | Ne anlatıyor |
 | --- | --- |
-| `offset` | Her repliğe eklenecek saniye. Negatifse altyazı **geç** geliyor, öne alınmalı. |
-| `match` | Altyazının ne kadarı diyaloğa oturuyor, %0-100. Karar bu sayıyla verilir. |
-| `at zero` | Düzeltme yapılmadan aynı puan. `match` ile karşılaştır: ikisi birbirine yakınsa dosya zaten iyiydi. |
-| `F1` | Taramanın büyüttüğü dengeli puan. Çeviri altyazısı satır birleştirip böldüğünde `match`'ten düşük çıkar, bu normaldir. |
-| `reference` | Ölçümün neye dayandığı. Gömülü ya da yan dosya metni güvenilir; `audio` yedek yoldur. |
-| `regions` | İlk, orta ve son üçte birde ölçülen kayma. Eşit değerler sabit gecikme demek. `?` o üçte birde ölçüm için yeterli replik (10'dan az) olmadığını gösterir. |
+| `subtitle` | Hangi dosya ölçüldü ve kaç satırı var. |
+| `offset` | Her satıra eklenecek saniye. Eksi, altyazının **geç** geldiğini ve öne alınması gerektiğini gösterir. |
+| `overlap` | Yüz üzerinden, altyazının ne kadarı konuşmanın olduğu yere oturuyor. Yüksek olması iyi. |
+| `unchanged` | Hiç düzeltme yapılmadan aynı ölçüm. İki sayıyı karşılaştır: birbirine yakınsa dosya zaten iyiydi, kazanç yok. |
+| `compared with` | Neyle karşılaştırıldığı. Videonun içindeki altyazı izi ya da klasördeki başka bir altyazı en güvenilir sonucu verir. Ses, son çare ve daha kaba. |
+| `checks` | Başta, ortada ve sonda ölçülen kayma. Üç sayı birbirine yakınsa tek kaydırma yeter. |
 
-### Eşikler ve neden orada durdukları
+### İki eşik
 
-| Koşul | Sonuç |
+| Durum | Araç ne der |
 | --- | --- |
-| `match` ≥ %90 ve kayma 0.35 s altında | `✅` hizalı |
-| `match` ≥ %55 ve gerçek bir kayma | `🔧` düzeltme var |
-| `match` < %55 | `❔` güvenme |
+| `overlap` yüzde 90 ve üstü, kayma 0.35 saniyenin altında | `✅` dokunma |
+| `overlap` yüzde 55 ve üstü, kayma gerçekten var | `🔧` düzeltilebilir |
+| `overlap` yüzde 55'in altında | `❔` güvenme |
 
-**0.35 saniye** boş verilen eşik. Altyazı kılavuzları yaklaşık dört kare
-(≈0.16 s) hataya izin verir. Saniyenin üçte birinin altında kimse fark etmiyor,
-dosyayı yeniden yazmak ise kazançtan çok risk.
+**Neden 0.35 saniye?** Altyazı kılavuzları hatanın yaklaşık dört karenin, yani
+0.16 saniyenin altında kalmasını ister. Saniyenin üçte birinin altında kimse fark
+etmiyor, dosyayı yeniden yazmak da o noktada kazançtan çok risk.
 
-**%55** işlem yapma tabanı. Çeviri altyazıları replikleri birleştirip böldüğü
-için %80-90 bandı normal, %98 çok iyi. Yarıdan fazla düşükse iki dosya büyük
-ihtimalle aynı kurguyu anlatmıyor ve araç tahmin etmeyi reddediyor.
+**Neden yüzde 55?** Çeviri, satırları birleştirip böler, bu yüzden asla kelimesi
+kelimesine örtüşmez. Yüzde 80 ile 90 arası normal, 98 çok iyi. Yarıdan aşağısı,
+iki dosyanın büyük ihtimalle filmin aynı sürümünü anlatmadığını gösterir ve araç
+tahmin yürütmeyi reddeder.
 
-## Nasıl çalışıyor
+## Nasıl karar veriyor
 
-### 1. Referans seçimi
+### 1. Karşılaştıracak bir şey bulması gerekiyor
 
-Referans, aday altyazının hizalandığı şey. Sırayla denenir:
+Sırayla şunlara bakar:
 
-| # | Referans | Ne zaman kullanılır |
+| # | Neyle karşılaştırır | Ne zaman |
 | --- | --- | --- |
-| 1 | Videodaki gömülü altyazı izi | Mux'lu sürümlerin çoğunda İngilizce iz var |
-| 2 | Video yanındaki `*.en.srt` / `*.eng.srt` | Altyazı izi olmayan `mp4` / web-dl dosyalar |
-| 3 | Ses: `ffmpeg silencedetect` ile konuşma aralıkları | Metin referansı hiç yoksa, son çare |
+| 1 | Videonun içindeki altyazı izi | Yayınlanan dosyaların çoğunda İngilizce iz var |
+| 2 | Aynı klasördeki İngilizce altyazı dosyası | `mp4` dosyalarında ve internet indirmelerinde içeride iz olmaz |
+| 3 | Ses: konuşmanın başladığı ve bittiği anlar | Hiç metin yoksa, en kaba yol |
 
-Referans 0.1 saniyelik adımlarla ikili bir zaman çizelgesine indirgenir: "burada
-konuşan var mı?" Aday altyazının her repliği, süresinin ne kadarı bu çizelgeye
-düştüğüne göre puanlanır.
+Bu karşılaştırma basit bir zaman çizelgesine dönüşür: burada konuşan var, burada
+yok. Sonra altyazının her satırına tek bir soru sorulur: konuşmanın olduğu yere mi
+düşüyor?
 
-### 2. Kaymanın taranması
+### 2. Bütün olası kaymaları dener
 
-Aday altyazı -25 ile +25 saniye arasında 0.1 saniyelik adımlarla kaydırılır, en
-iyi değerin çevresinde 0.02 saniyeye kadar inceltilir. Kaba taramada referans
-maskesi 0.5 saniye genişletilir; bir iki kare fark eden replik sınırları doğru
-hizalamayı cezalandırmasın diye.
+Altyazı eksi 25 ile artı 25 saniye arasında, saniyenin onda biri adımlarla
+kaydırılır. En iyi sonucun çevresinde yüzde birlik adımlara inilir. Kaba aramada
+"konuşan var" çizelgesi yarım saniye genişletilir, bir iki kare fark eden satır
+başlangıçları doğru eşleşmeyi bozmasın diye.
 
-### 3. Arama F1 ile, karar kesinlikle
+### 3. Çoğu aracı yakalayan tuzağa düşmemeye çalışıyor
 
-Sadece kesinlik üzerinden aramak tuzak, aracın ilk sürümü buna yakalandı. Film
-bir bölgede yoğun diyalogluysa altyazıyı oraya kaydırmak kesinliği yükseltir,
-oysa hiçbir replik yerine oturmaz. Sentetik testte "en iyi" kayma **+152 saniye**
-çıktı.
+Bir kaydırmayı yalnızca "altyazının ne kadarı konuşmanın üstüne düşüyor" diye
+ölçmek yanıltıcı. Filmin bir bölümünde neredeyse kesintisiz diyalog varsa,
+altyazıyı oraya itmek ölçümü yükseltir, oysa hiçbir satır yerine oturmaz. Bu aracın
+ilk sürümü tam olarak bunu yaptı ve bir test dosyasında **+152 saniye** gibi
+saçma bir sonuç verdi.
 
-Bu yüzden tarama **F1**'i büyütür: kesinlik ile duyarlılığın harmonik ortalaması.
-Hem yoğun bölgeye kaçmayı hem de diyaloğun yarısını kaçırmayı cezalandırır. Nihai
-*karar* ise **kesinlik** üzerinden verilir. Çünkü çeviri altyazıları replikleri
-meşru biçimde birleştirip böler: iki kaynak satır tek çeviri satırına dönüşebilir,
-o halde duyarlılık hiçbir zaman 1.0'a ulaşmaz.
+Bu yüzden arama iki şeye birlikte bakıyor: altyazının ne kadarı konuşmanın üstüne
+düşüyor, konuşmanın ne kadarı altyazıyla kaplanıyor. Yalnızca birini tutan kaydırma
+kötü puan alıyor.
 
-Duyarlılığın paydası genişletilmemiş maskeden hesaplanır; yoksa kusursuz hizalama
-bile yüzde yüzün çok altında puan alır.
+Son evet-hayır kararı ilk sayıya bakılarak veriliyor, çünkü çeviri orijinalin her
+satırını kaplamaz. İki İngilizce satır tek Türkçe satıra dönüşebilir, yani
+zamanlama kusursuz olsa bile tam kapsama imkânsız.
 
-### 4. Sabit gecikme mi, kare hızı mı?
+### 4. Tek kaydırma mı, farklı kare hızı mı?
 
-Kare hızı uyuşmazlığı bir kayma değil. Hata doğrusal büyür: başta sıfır, sonda
-onlarca saniye. Elle kaydırmak bunu düzeltmez.
+Bunlar iki ayrı sorun. Altyazı saniyede 25 kare için hazırlanmışsa ve film 24 kare
+oynuyorsa hata izledikçe büyür: başta hiç yok, sonda yirmi saniye. Bütün dosyayı
+kaydırmak bunu düzeltmez.
 
-Araç kaymayı filmin ilk, orta ve son üçte birinde ayrı ayrı ölçer:
+Araç bu yüzden üç kez ölçüyor: başta, ortada, sonda.
 
-- üçü de aynı → sabit kayma, uygula
-- dağılıyorlar → bilinen oranlar (24000/1001, 24, 25) denenir; biri belirgin
-  biçimde iyiyse **ölçek + kayma** birlikte uygulanır
-- yine ikna edici değilse → yanlış düzeltme yazmak yerine bunu söyler
+- üçü de aynı: tek kaydırma yeter
+- ayrışıyorlar: bilinen kare hızı oranlarını deniyor, biri belirgin biçimde iyiyse
+  kaydırmanın yanında bir hız düzeltmesi de uyguluyor
+- hâlâ belirsiz: yanlış bir değişiklik yazmak yerine bunu söylüyor
 
-### 5. Dosyaya yazma
+### 5. Dosyaya ne yapıyor
 
-`--fix` zamanları yerinde yeniden yazar, biçimi korur:
+`--fix` yalnız zamanları değiştirir, gerisini olduğu gibi bırakır:
 
-- UTF-8 BOM varsa korunur
-- CP1254 (Türkçe Windows) dosyalar tanınır ve yine CP1254 olarak yazılır
-- CRLF yazarken LF'ye normalize edilir (her oynatıcı ikisini de kabul eder)
-- dosyaya dokunmadan **önce** `.bak` (ya da `--backup-dir`) yazılır
-- `00:00:00`'a kırpılan replik sıfıra çökmez, süresini korur
+- dosyada UTF-8 imzası varsa korunur
+- eski Türkçe Windows kodlamasıyla kaydedilmiş dosyalar tanınır ve aynı kodlamayla
+  yazılır
+- Windows satır sonları Unix satır sonuna çevrilir, her oynatıcı ikisini de okur
+- dosyaya dokunmadan **önce** `.bak` kopyası yazılır
+- sıfırın önüne taşan satır yok olmaz, uzunluğunu korur
 
-## Komut referansı
+## Bütün seçenekler
 
 ```
 sub_handyman [VİDEO | --scan DİZİN] [seçenekler]
 ```
 
-| Seçenek | Anlamı |
+| Seçenek | Ne yapar |
 | --- | --- |
-| `VİDEO` | Video dosyası ya da klasör (alt klasörlerle taranır) |
-| `--scan DİZİN` | Dizini alt klasörleriyle tarar (`mkv`, `mp4`, `m4v`, `avi`, `mov`, `webm`, `ts`) |
-| `--sub DOSYA` | Otomatik bulma yerine bu altyazıyı kullan |
-| `--fix` | Ölçülen düzeltmeyi uygula |
-| `--yes` | Onay sorma (cron, script) |
-| `--audio` | Metin referanslarını atla, doğrudan sesi kullan |
-| `--json` | Makine okunur çıktı (`--scan` ile dizi döner) |
-| `--backup-dir DİZİN` | `.bak` dosyalarını altyazının yanı yerine buraya yaz |
-| `--lang {en,tr}` | Çıktı dili (varsayılan: `SUB_HANDYMAN_LANG`, yoksa `en`) |
+| `VİDEO` | Video dosyası ya da klasör (alt klasörler dahil taranır) |
+| `--scan DİZİN` | Klasördeki videoları arar: `mkv`, `mp4`, `m4v`, `avi`, `mov`, `webm`, `ts` |
+| `--sub DOSYA` | Tahmin etmek yerine bu altyazıyı kullan |
+| `--fix` | Ölçülen kaydırmayı uygula |
+| `--yes` | Onay sorma |
+| `--audio` | Metni bırak, sesle karşılaştır |
+| `--json` | Rapor yerine makine okunur çıktı ver |
+| `--backup-dir DİZİN` | `.bak` dosyalarını altyazının yanı yerine buraya koy |
+| `--lang {en,tr}` | Rapor dili, İngilizce ya da Türkçe |
 | `--version` | Sürümü yazdır |
 
-### Altyazının otomatik bulunması
+### Hangi altyazıyı seçiyor
 
-`Bir Film.mkv` verildiğinde araç aynı klasörde adı `Bir Film` ile başlayıp `.srt`
-ile biten dosyaları arar ve Türkçe işaretli olanları (`.tr.`, `tr.srt`) öne alır.
-Referans için İngilizceyi (`*.en.*`, `*.eng.*`) tercih eder. Klasörde birden çok
-dil varsa ve yanlış seçiliyorsa `--sub` ile açıkça ver.
+`Bir Film.mkv` verildiğinde aynı klasörde adı `Bir Film` ile başlayan `.srt`
+dosyalarına bakar. Birden çok varsa Türkçe olanları (`.tr.`, `tr.srt`) öne alır.
+Karşılaştırma için İngilizce olanları (`*.en.*`, `*.eng.*`) tercih eder. Yanlış
+olanı seçiyorsa `--sub` ile istediğini söyle.
 
 ### Çıkış kodları
 
 | Kod | Anlamı |
 | --- | --- |
-| `0` | Hizalı (ya da temiz ölçüldü), iş yok |
-| `1` | Düzeltme uygulandı ya da gerekiyor ama `--fix` verilmedi |
-| `2` | Ölçüm başarısız (altyazı yok, referans yok, video okunamadı) |
+| `0` | İş yok, altyazı zaten oturuyor |
+| `1` | Kaydırma uygulandı ya da gerekiyordu ama `--fix` verilmedi |
+| `2` | Ölçemedi: altyazı yok, karşılaştıracak bir şey yok, video okunamıyor |
 
-Script tarafında asıl dallanmak istediğin şey genelde "her şey yolunda" ile
-"kayma bulundu" ayrımı:
+Script içinde asıl merak ettiğin şey "her şey yolunda" ile "buna bakmak lazım"
+ayrımı oluyor:
 
 ```bash
-python3 sub_handyman.py --scan /media/filmler --json > rapor.json || echo "kayma var"
+python3 sub_handyman.py --scan /media/filmler --json > rapor.json || echo "bakılacak var"
 ```
 
 ### JSON çıktısı
 
 ```json
 {
-  "shift": -5.3,
-  "match": 0.984,
-  "match_at_zero": 0.844,
-  "f1": 0.935,
-  "scale": 1.0,
-  "regions": [-5.3, -5.3, -5.3],
-  "region_spread": 0.05,
-  "method": "embedded subtitle (stream 2)",
+  "offset": -5.3,
+  "overlap": 0.984,
+  "overlap_unchanged": 0.844,
+  "balance": 0.935,
+  "speed": 1.0,
+  "checks": [-5.3, -5.3, -5.3],
+  "checks_apart": 0.05,
+  "compared_with": "subtitle track inside the video (stream 2)",
   "video": "movie.mkv",
   "subtitle": "movie.tr.srt",
-  "cues": 1245,
+  "lines": 1245,
   "needs_fix": true,
   "aligned": false,
   "applied": true,
@@ -357,43 +362,46 @@ python3 sub_handyman.py --scan /media/filmler --json > rapor.json || echo "kayma
 
 | Alan | Anlamı |
 | --- | --- |
-| `shift` | Her repliğe eklenecek saniye (negatif = altyazı geç geliyor) |
-| `match` | Kesinlik; `f1` taramanın büyüttüğü puan |
-| `match_at_zero` | Dosyaya dokunmadan kesinlik |
-| `scale` | Replik zamanlarına `shift`'ten önce uygulanan çarpan (1.0 = yok) |
-| `regions` | İlk, orta ve son üçte birde ölçülen kayma |
-| `region_spread` | `regions` farkı; 1.5 saniyeyi geçerse sabit model şüpheli |
-| `needs_fix` | Eşleşme işlem yapmaya yetiyor ve bekleyen bir düzeltme var |
-| `aligned` | Eşleşme yüksek, düzeltilecek bir şey yok |
-| `applied` / `backup` | Yalnız `--fix` dosyayı gerçekten yazdıysa gelir |
+| `offset` | Her satıra eklenecek saniye. Eksi, altyazının geç geldiğini gösterir. |
+| `overlap` | Altyazının konuşmanın üstüne düşen oranı, 0 ile 1 arası. |
+| `overlap_unchanged` | Hiç düzeltme yapılmadan aynı oran. |
+| `balance` | Aramanın kullandığı birleşik puan. Çeviri altyazılarında `overlap`'ten düşük çıkması normal. |
+| `speed` | Kaydırmadan önce uygulanan hız düzeltmesi. `1.0` ise yok. |
+| `checks` | Başta, ortada ve sonda ölçülen kayma. |
+| `checks_apart` | Bu üç sayının birbirinden uzaklığı. 1.5 saniyeyi geçerse tek kaydırmaya güvenme. |
+| `compared_with` | Neyle karşılaştırıldığı. |
+| `lines` | Altyazıdaki satır sayısı. |
+| `needs_fix` | Bir kaydırma mümkün ve henüz uygulanmadı. |
+| `aligned` | Altyazı zaten oturuyor. |
+| `applied`, `backup` | Yalnız `--fix` dosyayı gerçekten yazdıysa gelir. |
 
-`--scan` tek video bulsa bile **her zaman dizi** döner. Tek `VİDEO` argümanı tek
+`--scan` tek video bulsa bile **her zaman liste** döner. Tek `VİDEO` verirsen tek
 nesne döner.
 
-## Tarifler
+## Günlük kullanım
 
-### Dokunmadan önce bütün arşivi kontrol et
+### Değiştirmeden önce bütün klasöre bak
 
 ```bash
 python3 sub_handyman.py --scan ~/Videolar/Filmler --json > rapor.json
 python3 - <<'PY'
 import json
-for r in json.load(open("rapor.json")):
-    if r.get("needs_fix"):
-        print(f"{r['subtitle']}: {r['shift']:+.2f} sn (eşleşme {r['match']:.0%})")
+for item in json.load(open("rapor.json")):
+    if item.get("needs_fix"):
+        print(f"{item['subtitle']}: {item['offset']:+.2f} sn (örtüşme {item['overlap']:.0%})")
 PY
 ```
 
-### Emin olunanları düzelt
+### Açıkça kaymış olanları düzelt
 
 ```bash
 python3 sub_handyman.py --scan ~/Videolar/Filmler --fix --yes
 ```
 
-`❔` diye raporlanan dosyalar `--fix` verilse bile atlanır: kendinden emin yanlış
-bir yazma, bilinen bozuk bir altyazıdan daha kötü.
+`❔` işaretli dosyalar `--fix` verilse bile atlanır. Kendinden emin biçimde yanlış
+yazmak, bozuk olduğunu bildiğin bir altyazıdan daha kötü.
 
-### İndirme hattına ekle
+### Her indirmeden sonra çalıştır
 
 ```bash
 for f in "$indirme_dizini"/*.mkv "$indirme_dizini"/*.mp4; do
@@ -402,72 +410,72 @@ for f in "$indirme_dizini"/*.mkv "$indirme_dizini"/*.mp4; do
 done
 ```
 
-Ucuz adım: gömülü referans varsa yalnız altyazı izi okunur, maliyet dosya
-boyutuyla artmaz.
+Ucuz bir adım: videonun içinde altyazı izi varsa yalnız o iz okunur, iş dosya
+boyutuyla büyümez.
 
-### Ses yolunu zorla
+### Sesle karşılaştır
 
-Tek metin izi yorum (commentary) olan remux'lar ya da gömülü dubtitle taşıyan
-`mp4` dosyalar için:
+Tek metin izi yorum olan dosyalar ya da altyazısı görüntünün içine gömülmüş `mp4`
+dosyaları için:
 
 ```bash
 python3 sub_handyman.py movie.mp4 --audio
 ```
 
-### Altyazıyı elle seç
+### Altyazıyı kendin seç
 
-Klasörde birden çok dil varsa ve otomatik bulma yanılıyorsa:
+Klasörde birkaç dil varsa ve tahmin yanlışsa:
 
 ```bash
 python3 sub_handyman.py movie.mkv --sub "movie.pt-BR.srt"
 ```
 
-### Türkçe çıktı
+### Türkçe rapor
 
 ```bash
 export SUB_HANDYMAN_LANG=tr     # ya da: --lang tr
 ```
 
-## Başarım
+## Ne kadar sürüyor
 
-Raspberry Pi 5 (8 GB, NVMe), 15 GB'lık 4K HEVC remux ile ölçüldü:
+Raspberry Pi 5 (8 GB, NVMe) ve 15 GB'lık bir 4K dosyayla ölçüldü:
 
-| Referans | Süre | Not |
+| Neyle karşılaştırıyor | Süre | Nedeni |
 | --- | --- | --- |
-| Gömülü altyazı | ~20 sn | ffmpeg yalnız altyazı izini çıkarır |
-| Yan dosya `.srt` | ~5 sn | saf Python, kod çözme yok |
-| Ses (`--audio`) | 2-4 dk | sesin tamamı `silencedetect`'ten geçer |
+| Videonun içindeki altyazı izi | yaklaşık 20 sn | ffmpeg yalnız altyazı izini okuyor |
+| Klasördeki İngilizce altyazı | yaklaşık 5 sn | saf Python, çözülecek bir şey yok |
+| Ses (`--audio`) | 2 ile 4 dk | sesin tamamı taranıyor |
 
-Darboğaz tarama değil, kod çözme.
+Arama hızlı. Asıl zamanı videoyu okumak alıyor.
 
-## Sınırlar
+## Yapamadıkları
 
 - Zamanlamayı düzeltir, çeviriyi değil. Kötü çeviri kötü kalır.
-- Farklı kurguya ait altyazı (uzatılmış/ekstra sürüm, değişmiş sahne sırası)
-  düşük puan alır; araç `❔` der ve tahmin etmez.
-- Ses referansı müzik ve efektin yoğun olduğu sahnelerde gürültülü. Metin
-  referansı varsa o her zaman tercih edilir, `--audio` bilinçli bir seçim.
-- Her koşuda video başına tek altyazı. Toplu modda Türkçe dosya, yoksa ilk
-  `.srt` seçilir.
-- `.ass`/`.ssa` dosyaları `--sub` ile *ölçülebilir*, ama yalnız `.srt` zamanları
-  yeniden yazılır.
-- Değişken kare hızı ve kare düşmesi olan sürümlerde kayma ne sabit ne ölçekli
-  olur; bölge kontrolü bunu işaretler, gerisi elle iş.
+- Altyazı filmin başka bir sürümüne aitse (uzatılmış sürüm, sinema sürümü, farklı
+  sahne sırası) puan düşük çıkar, araç `❔` der ve tahmin yürütmez.
+- Ses, müzik ve efektin yüksek olduğu sahnelerde kaba bir rehber. Metinle
+  karşılaştırma her zaman tercih edilir, `--audio` senin açıkça istediğin bir şey.
+- Her koşuda video başına tek altyazı. Klasörde Türkçe dosya varsa onu, yoksa ilk
+  `.srt` dosyasını seçer.
+- `.ass` ve `.ssa` dosyaları `--sub` ile ölçülebilir, ama yalnız `.srt` zamanları
+  yazılır.
+- Değişken kare hızı olan ve kare düşüren dosyalarda kayma ne kaydırmayla ne hız
+  düzeltmesiyle anlatılabilir. Üç ölçüm bunu ortaya çıkarır, gerisi elle iş.
 
-## Sorun giderme
+## Bir şey ters giderse
 
-| Belirti | Nedeni | Ne yapmalı |
+| Ne görüyorsun | Nedeni | Ne yapmalı |
 | --- | --- | --- |
-| `no .srt next to the video` | Altyazı farklı adlandırılmış ya da başka klasörde | Videoyla aynı adı ver ya da `--sub` kullan |
-| `subtitle too short (n cues)` | Dosya kırpılmış, reklam ya da müzik listesi | Yanlış dosya: `--sub` ile gerçek altyazıyı göster |
-| Her filmde `❔` | Referans ses, karışım da müzik ağırlıklı | Gömülü altyazı izi var mı bak, yoksa metin referansı bul |
-| Düzeltildi, oynatıcıda hâlâ geç | Oynatıcı ya da medya sunucusu eski altyazıyı önbellekte tutuyor | İçeriği kapat-aç, yenilemeye zorla |
-| `⚠️ region offsets disagree` | Farklı kurgu ya da değişken kare hızı | Uygulama. Tam o sürüme ait altyazıyı bul |
-| `⚠️ frame-rate mismatch suspected` | 23.976 / 24 / 25 uyuşmazlığı | `--fix` ölçek + kayma uygular; sonrasında filmin sonunu kontrol et |
-| `measurement failed: …` | ffmpeg yok, video okunamıyor, ses izi yok | Mesajı oku; `ffmpeg -version` kontrol et |
-| Script JSON'da patlıyor | `--scan` dizi, tek dosya nesne döner | Ayrıştırmadan önce normalize et ya da hep `--scan` kullan |
+| `no .srt next to the video` | Altyazının adı farklı ya da başka klasörde | Videonun adını ver ya da `--sub` kullan |
+| `subtitle too short (3 lines)` | Dosya kırpılmış, reklam ya da müzik listesi | `--sub` ile gerçek altyazıyı göster |
+| Her filmde `❔` | Sesle karşılaştırmaya düşmüş ve film müzikli | Videonun içinde altyazı izi var mı bak, yoksa metin altyazı bul |
+| Düzelttim, oynatıcı hâlâ geç gösteriyor | Oynatıcı ya da sunucu eski kopyayı gösteriyor | Filmi kapat-aç |
+| `⚠️ checks at the start, middle and end disagree` | Filmin farklı sürümü ya da değişken kare hızı | Uygulama. O sürüme ait altyazıyı bul |
+| `⚠️ timed for a different frame rate` | 23.976, 24 ve 25 karışmış | `--fix` hız düzeltmesini de uygular, sonra son dakikaları kontrol et |
+| `measurement failed: …` | ffmpeg yok, video okunamıyor, ses izi yok | Mesajı oku, `ffmpeg -version` kontrol et |
+| Script JSON'da hata veriyor | `--scan` liste döner, tek dosya nesne döner | Hep `--scan` kullan ya da iki biçimi de ele al |
 
-Bir noktada emin değilsen `--fix` vermeden çalıştır. Ölçüm hiçbir şeyi değiştirmez.
+Emin olamadığında `--fix` vermeden çalıştır. Ölçmek hiçbir şeyi değiştirmez.
 
 ## Testler
 
@@ -475,11 +483,12 @@ Bir noktada emin değilsen `--fix` vermeden çalıştır. Ölçüm hiçbir şeyi
 python3 -m unittest discover -s tests -v
 ```
 
-20 test var, video ve ffmpeg gerekmiyor. SRT ayrıştırma (BOM, CRLF, bozuk girdi,
-2/3/4 haneli kesirler), zaman damgası biçimleme ve kırpma, kesirli değerler
-dahil birkaç büyüklükte kayma kurtarma, fps ölçek tespiti, bölge tutarlılığı,
-sessizlik tespiti ayrıştırma, CP1254 gidiş-dönüş ve zor dosya adlarıyla keşif
-sınanıyor.
+21 test var. Video ve ffmpeg gerekmiyor. Altyazı dosyası okumayı (UTF-8 imzası,
+Windows satır sonları, bozuk girdi, iki, üç ve dört ondalıklı zamanlar), zaman
+yazmayı ve sıfırda kırpmayı, bilinen kaymaları kesirli değerler dahil geri
+bulmayı, kare hızı farkını yakalamayı, üç ölçümün birbirini tutmasını, ses
+taramasının ayrıştırılmasını, eski Türkçe kodlamanın korunmasını, zor adlı
+dosyaların bulunmasını ve raporun dilini sınıyor.
 
 ## Lisans
 

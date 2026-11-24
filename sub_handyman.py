@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.1.1"
+__version__ = "1.2.0"
 
 # ---------------------------------------------------------------- i18n
 # CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
@@ -41,34 +41,40 @@ LANG = os.environ.get("SUB_HANDYMAN_LANG", "en")
 STRINGS = {
     "no_srt": {"en": "no .srt next to the video", "tr": "yanında .srt yok"},
     "too_short": {"en": "subtitle too short ({n} cues)", "tr": "altyazı çok kısa ({n} replik)"},
-    "ref_too_short": {"en": "reference too short", "tr": "referans çok kısa"},
-    "emb_method": {"en": "embedded subtitle (stream {i})", "tr": "gömülü altyazı (stream {i})"},
-    "sib_method": {"en": "sibling reference ({name})", "tr": "yan dosya referansı ({name})"},
-    "audio_method": {"en": "audio (silencedetect speech intervals)",
-                     "tr": "ses (silencedetect konuşma aralıkları)"},
-    "warn_scale": {"en": "frame-rate mismatch suspected (scale {scale:.5f}): a constant shift "
-                         "cannot fix this, --fix applies scale + shift",
-                   "tr": "fps uyuşmazlığı görünüyor (ölçek {scale:.5f}) → sabit kayma yetmez, "
-                         "--fix ile ölçekli düzeltme uygulanır"},
-    "warn_region": {"en": "region offsets disagree ({spread:.1f}s start to end): "
-                          "a constant shift is not trustworthy",
-                    "tr": "bölge kaymaları tutarsız (baş/orta/son arası {spread:.1f} sn) "
-                          "→ sabit kayma güvenilir değil"},
-    "sub_line": {"en": "    subtitle: {name} ({cues} cues)",
+    "ref_too_short": {"en": "the file it is compared with is too short",
+                      "tr": "karşılaştırma dosyası çok kısa"},
+    "emb_method": {"en": "subtitle track inside the video (stream {i})",
+                   "tr": "videonun içindeki altyazı izi (stream {i})"},
+    "sib_method": {"en": "subtitle file next to the video ({name})",
+                   "tr": "video yanındaki altyazı dosyası ({name})"},
+    "audio_method": {"en": "sound (when speech starts and stops)",
+                     "tr": "ses (konuşmanın başlayıp bittiği anlar)"},
+    "warn_scale": {"en": "the subtitle was probably timed for a different frame rate "
+                         "({scale:.5f}x): one fixed shift cannot fix this, --fix applies a "
+                         "speed correction as well",
+                   "tr": "altyazı büyük ihtimalle farklı bir kare hızına göre hazırlanmış "
+                         "({scale:.5f} kat): tek kaydırma yetmez, --fix hız düzeltmesi de uygular"},
+    "warn_region": {"en": "the checks at the start, middle and end disagree by {spread:.1f}s: "
+                          "one fixed shift will not fix this",
+                    "tr": "baş, orta ve sondaki ölçümler {spread:.1f} sn ayrışıyor: "
+                          "tek kaydırma bunu düzeltmez"},
+    "sub_line": {"en": "    subtitle: {name} ({cues} lines)",
                  "tr": "    altyazı: {name} ({cues} replik)"},
-    "shift_line": {"en": "    offset: {shift:+.2f}s · match: {match:.1f}% (at zero {zero:.1f}%) · F1 {f1:.1f}%",
-                   "tr": "    kayma: {shift:+.2f} sn · eşleşme: {match:.1f}% (0 kaymada {zero:.1f}%) · F1 {f1:.1f}%"},
-    "scale_line": {"en": "    scale: {scale:.5f} (frame-rate difference)",
-                   "tr": "    ölçek: {scale:.5f} (fps farkı)"},
-    "ref_line": {"en": "    reference: {method}", "tr": "    referans: {method}"},
-    "regions_line": {"en": "    regions (start/mid/end): {regions}",
-                     "tr": "    bölgeler (baş/orta/son): {regions}"},
-    "low_conf": {"en": "    low confidence: weak match, do not apply without checking",
-                 "tr": "    güvenilir ölçüm yok: eşleşme zayıf, doğrulamadan düzeltme yapma"},
+    "shift_line": {"en": "    offset: {shift:+.2f}s · overlap: {match:.1f}% "
+                         "(unchanged: {zero:.1f}%)",
+                   "tr": "    kayma: {shift:+.2f} sn · örtüşme: {match:.1f}% "
+                         "(değiştirmeden: {zero:.1f}%)"},
+    "scale_line": {"en": "    speed correction: {scale:.5f}x", "tr": "    hız düzeltmesi: {scale:.5f} kat"},
+    "ref_line": {"en": "    compared with: {method}", "tr": "    karşılaştırma: {method}"},
+    "regions_line": {"en": "    checks (start/middle/end): {regions}",
+                     "tr": "    kontroller (baş/orta/son): {regions}"},
+    "low_conf": {"en": "    not sure: the two files do not line up well, look before changing anything",
+                 "tr": "    emin değil: iki dosya iyi örtüşmüyor, değiştirmeden önce kontrol et"},
     "measure_error": {"en": "measurement failed: {err}", "tr": "ölçüm hatası: {err}"},
     "no_videos": {"en": "no video files found", "tr": "klasörde video bulunamadı"},
-    "confirm": {"en": "    → shift by {shift:+.2f}s? [y/N] ", "tr": "    → {shift:+.2f} sn kaydırılsın mı? [e/H] "},
-    "applied": {"en": "    applied, backup: {path}", "tr": "    uygulandı, yedek: {path}"},
+    "confirm": {"en": "    → shift by {shift:+.2f}s? [y/N] ",
+                "tr": "    → {shift:+.2f} sn kaydırılsın mı? [e/H] "},
+    "applied": {"en": "    done, backup: {path}", "tr": "    yapıldı, yedek: {path}"},
     "yes": {"en": ("y", "yes"), "tr": ("e", "evet")},
 }
 
@@ -323,13 +329,13 @@ def measure(cues, ref, ref_end: float) -> dict:
         spread = None
 
     return {
-        "shift": round(shift, 2),
-        "match": round(prec, 3),
-        "f1": round(f1, 3),
-        "match_at_zero": round(sc_zero, 3),
-        "scale": round(scale, 5),   # aday altyazıya uygulanacak çarpan (1.0 = sadece kayma)
-        "regions": regions,
-        "region_spread": spread,
+        "offset": round(shift, 2),
+        "overlap": round(prec, 3),
+        "balance": round(f1, 3),
+        "overlap_unchanged": round(sc_zero, 3),
+        "speed": round(scale, 5),   # altyazı zamanlarına uygulanacak çarpan (1.0 = sadece kayma)
+        "checks": regions,
+        "checks_apart": spread,
     }
 
 
@@ -455,7 +461,7 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
                 raise RuntimeError(t("ref_too_short"))
             ref_end = max(b for _, b in ref_cues) + 30
             m = measure(cues, ref_cues, ref_end)
-            m["method"] = t("emb_method", i=pick["index"])
+            m["compared_with"] = t("emb_method", i=pick["index"])
         except Exception:
             pick = None
     if m is None and not use_audio:
@@ -466,7 +472,7 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
                 if len(ref_cues) < 20:
                     raise RuntimeError(t("ref_too_short"))
                 m = measure(cues, ref_cues, max(b for _, b in ref_cues) + 30)
-                m["method"] = t("sib_method", name=ref.name)
+                m["compared_with"] = t("sib_method", name=ref.name)
             except Exception:
                 m = None
     if m is None:
@@ -478,21 +484,21 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
         dur = float(dur_match.group(1))
         intervals = audio_speech_intervals(video, dur)
         m = measure(cues, ("audio", intervals), dur)
-        m["method"] = t("audio_method")
+        m["compared_with"] = t("audio_method")
 
     m.update({
         "video": str(video),
         "subtitle": str(sub),
-        "cues": len(cues),
-        "needs_fix": (m["match"] >= THRESH_LOW
-                      and (abs(m["shift"]) >= MIN_DELTA or abs(m["scale"] - 1.0) > 0.002)),
-        "aligned": (m["match"] >= THRESH_OK and abs(m["shift"]) < MIN_DELTA
-                    and abs(m["scale"] - 1.0) <= 0.002),
+        "lines": len(cues),
+        "needs_fix": (m["overlap"] >= THRESH_LOW
+                      and (abs(m["offset"]) >= MIN_DELTA or abs(m["speed"] - 1.0) > 0.002)),
+        "aligned": (m["overlap"] >= THRESH_OK and abs(m["offset"]) < MIN_DELTA
+                    and abs(m["speed"] - 1.0) <= 0.002),
     })
-    if abs(m["scale"] - 1.0) > 0.002:
-        m["warning"] = t("warn_scale", scale=m["scale"])
-    elif m["region_spread"] is not None and m["region_spread"] > 1.5:
-        m["warning"] = t("warn_region", spread=m["region_spread"])
+    if abs(m["speed"] - 1.0) > 0.002:
+        m["warning"] = t("warn_scale", scale=m["speed"])
+    elif m["checks_apart"] is not None and m["checks_apart"] > 1.5:
+        m["warning"] = t("warn_region", spread=m["checks_apart"])
     if tmp and tmp.exists():
         tmp.unlink(missing_ok=True)
     return m
@@ -504,14 +510,14 @@ def fmt_report(r: dict) -> str:
         return f"⚠️  {name}: {r['error']}"
     mark = "✅" if r["aligned"] else ("🔧" if r["needs_fix"] else "❔")
     lines = [f"{mark} {name}"]
-    lines.append(t("sub_line", name=Path(r["subtitle"]).name, cues=r["cues"]))
-    lines.append(t("shift_line", shift=r["shift"], match=r["match"] * 100,
-                   zero=r["match_at_zero"] * 100, f1=r["f1"] * 100))
-    if abs(r.get("scale", 1.0) - 1.0) > 0.002:
-        lines.append(t("scale_line", scale=r["scale"]))
-    lines.append(t("ref_line", method=r["method"]))
-    if r.get("regions"):
-        reg = " / ".join("?" if x is None else f"{x:+.2f}" for x in r["regions"])
+    lines.append(t("sub_line", name=Path(r["subtitle"]).name, cues=r["lines"]))
+    lines.append(t("shift_line", shift=r["offset"], match=r["overlap"] * 100,
+                   zero=r["overlap_unchanged"] * 100))
+    if abs(r.get("speed", 1.0) - 1.0) > 0.002:
+        lines.append(t("scale_line", scale=r["speed"]))
+    lines.append(t("ref_line", method=r["compared_with"]))
+    if r.get("checks"):
+        reg = " / ".join("?" if x is None else f"{x:+.2f}" for x in r["checks"])
         lines.append(t("regions_line", regions=reg))
     if not r["aligned"] and not r["needs_fix"]:
         lines.append(t("low_conf"))
@@ -570,14 +576,14 @@ def main() -> int:
                 go = args.yes
                 if not go:
                     try:
-                        ans = input(t("confirm", shift=r["shift"])).strip().lower()
+                        ans = input(t("confirm", shift=r["offset"])).strip().lower()
                         go = ans.startswith(STRINGS["yes"].get(LANG, ("y",))[0])
                     except EOFError:
                         go = False
                 if go:
                     bak_dir = Path(args.backup_dir) if args.backup_dir else None
-                    shift_srt(Path(r["subtitle"]), float(r["shift"]), bak_dir,
-                              float(r.get("scale", 1.0)))
+                    shift_srt(Path(r["subtitle"]), float(r["offset"]), bak_dir,
+                              float(r.get("speed", 1.0)))
                     bak_path = (bak_dir / (Path(r["subtitle"]).name + ".bak")) if bak_dir \
                         else Path(str(r["subtitle"]) + ".bak")
                     r["applied"] = True
