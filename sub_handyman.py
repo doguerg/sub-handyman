@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 
 # ---------------------------------------------------------------- i18n
 # CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
