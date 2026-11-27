@@ -407,9 +407,6 @@ def fit_parts(cues, fine: list[int], cum: list[int], step: float) -> dict | None
         (strong if len(sub) >= 10 and span >= 30 else weak).append(item)
     if not strong:
         return None
-    if os.environ.get("SUB_HANDYMAN_DEBUG"):
-        print("strong:", strong, file=sys.stderr)
-        print("weak:", weak, file=sys.stderr)
 
     # zayıf parçaların replikleri en iyi oturan güçlü parçanın kaymasını alır
     offs = [s["offset"] for s in strong]
