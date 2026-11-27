@@ -31,7 +31,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 # ---------------------------------------------------------------- i18n
 # CLI metinleri iki dilli. Varsayılan İngilizce; SUB_HANDYMAN_LANG=tr ya da
@@ -64,6 +64,14 @@ STRINGS = {
                          "(unchanged: {zero:.1f}%)",
                    "tr": "    kayma: {shift:+.2f} sn · örtüşme: {match:.1f}% "
                          "(değiştirmeden: {zero:.1f}%)"},
+    "steps_line": {"en": "    offset: not one value, the subtitle fits the video in {n} parts, "
+                         "{lo:+.2f}s to {hi:+.2f}s",
+                   "tr": "    kayma: tek değer değil, altyazı videoya {n} parçada oturuyor "
+                         "({lo:+.2f} ile {hi:+.2f} sn)"},
+    "steps_overlap_line": {"en": "    overlap: {match:.1f}% (unchanged: {zero:.1f}%)",
+                           "tr": "    örtüşme: {match:.1f}% (değiştirmeden: {zero:.1f}%)"},
+    "steps_parts_line": {"en": "    parts start at: {parts}",
+                         "tr": "    parçaların başladığı yerler: {parts}"},
     "scale_line": {"en": "    speed correction: {scale:.5f}x", "tr": "    hız düzeltmesi: {scale:.5f} kat"},
     "ref_line": {"en": "    compared with: {method}", "tr": "    karşılaştırma: {method}"},
     "regions_line": {"en": "    checks (start/middle/end): {regions}",
@@ -76,6 +84,8 @@ STRINGS = {
                     "tr": "bir video dosyası ya da --scan DİZİN ver"},
     "confirm": {"en": "    → shift by {shift:+.2f}s? [y/N] ",
                 "tr": "    → {shift:+.2f} sn kaydırılsın mı? [e/H] "},
+    "confirm_steps": {"en": "    → move the {n} parts separately? [y/N] ",
+                      "tr": "    → {n} parça ayrı ayrı kaydırılsın mı? [e/H] "},
     "applied": {"en": "    done, backup: {path}", "tr": "    yapıldı, yedek: {path}"},
     "yes": {"en": ("y", "yes"), "tr": ("e", "evet")},
 }
@@ -94,6 +104,14 @@ FPS_SCALES = (25 / 23.976, 24 / 23.976, 23.976 / 25, 23.976 / 24, 25 / 24, 24 / 
 FINE_STEP = 0.02
 COARSE_RANGE = 25.0
 REGION_COUNT = 3
+# parçalı kayma: altyazı bazen videonun tamamına tek kaymayla oturmaz, çünkü
+# altyazı reklam araları farklı kesilmiş bir yayına göre hazırlanmıştır. O zaman
+# kayma zamanla basamak basamak değişir; her parça kendi kaymasını alır.
+PIECE_WINDOW = 180.0      # kayma ölçülen pencere (saniye)
+PIECE_STRIDE = 60.0       # pencerelerin kaydırılma adımı
+PIECE_MIN_CUES = 12       # pencerede ölçüm için gereken en az replik
+PIECE_PENALTY = 0.8       # yeni parça açmanın bedeli (replik başına 1.0 üzerinden)
+PIECE_GAIN = 0.01         # parçalı çözüm ancak bu kadar kazanırsa kullanılır
 
 
 # ---------------------------------------------------------------- srt okuma
@@ -228,19 +246,23 @@ def _prefix(mask: bytearray) -> list[int]:
 
 
 def _f1(cues, cum: list[int], step: float, shift: float,
-        ref_cum: list[int] | None = None) -> tuple[float, float]:
-    """(F1, kesinlik) döndürür. Arama F1 ile, karar kesinlikle verilir."""
-    """Kesinlik ve duyarlılığın harmonik ortalaması (F1).
+        ref_cum: list[int] | None = None,
+        deltas: list[float] | None = None) -> tuple[float, float]:
+    """(F1, kesinlik) döndürür. Arama F1 ile, karar kesinlikle verilir.
 
     Sadece kesinlik kullanmak yanıltıcı: maskenin yoğun olduğu bir bölgeye
-    kaydırmak kesinliği yükseltir ama hiçbir replik doğru yere oturmaz.
-    F1 iki hatayı birden cezalandırır.
+    kaydırmak kesinliği yükseltir ama hiçbir replik doğru yere oturmaz. F1 iki
+    hatayı birden cezalandırır.
+
+    `deltas` verilirse her replik kendi kaymasıyla yerleştirilir (parçalı kayma);
+    o durumda `shift` kullanılmaz.
     """
     n = len(cum) - 1
     tp = den_c = 0
     lo_span, hi_span = None, None
-    for a, b in cues:
-        lo, hi = int((a + shift) / step), int((b + shift) / step)
+    pairs = zip(cues, deltas) if deltas is not None else ((c, shift) for c in cues)
+    for (a, b), d in pairs:
+        lo, hi = int((a + d) / step), int((b + d) / step)
         if lo < 0 or hi >= n:
             continue
         hi = max(hi, lo)
@@ -279,6 +301,143 @@ def best_shift(cues, cum: list[int], step: float, lo: float, hi: float,
 
 def _scale_cues(cues, scale: float):
     return [(a * scale, b * scale) for a, b in cues] if scale != 1.0 else cues
+
+
+def _cue_scores(cues, fine: list[int], cands: list[float], step: float) -> list[list[float]]:
+    """Her repliğin her aday kaymadaki oturuşu (0..1, çevresiyle birlikte)."""
+    return [[_cue_offset_score(c, fine, off, step) for off in cands] for c in cues]
+
+
+def _best_path(rows: list[list[float]], penalty: float) -> list[int]:
+    """Viterbi: her repliğe bir kayma seç, kayma değiştirmenin bedeli var."""
+    k = len(rows[0])
+    dp = list(rows[0])
+    back = [[0] * k for _ in rows]
+    for i in range(1, len(rows)):
+        new = [0.0] * k
+        for j in range(k):
+            best, bi = -1e9, j
+            for p in range(k):
+                v = dp[p] - (penalty if p != j else 0.0)
+                if v > best:
+                    best, bi = v, p
+            new[j] = best + rows[i][j]
+            back[i][j] = bi
+        dp = new
+    j = max(range(k), key=lambda x: dp[x])
+    path = [0] * len(rows)
+    for i in range(len(rows) - 1, -1, -1):
+        path[i] = j
+        j = back[i][j]
+    return path
+
+
+def _cue_offset_score(cue, fine: list[int], off: float, step: float,
+                      pad: float = 10.0) -> float:
+    """Tek repliğin verilen kaymayla referansa ne kadar oturduğu (Jaccard).
+
+    Yalnız repliğin kendi aralığına bakmak yetmiyor: referansın yoğun olduğu
+    yerde her kayma 1.0 veriyor (kesinlik yalanı). Repliğin çevresindeki
+    ``pad`` saniyeyi de karşılaştırmaya katmak, yanlış kaymayı ayırır.
+    """
+    n = len(fine) - 1
+    a, b = cue[0] + off, cue[1] + off
+    lo, hi = int((a - pad) / step), int((b + pad) / step)
+    if lo < 0 or hi >= n or hi <= lo:
+        return 0.0
+    clip_lo, clip_hi = int(a / step), int(b / step)
+    clip_hi = max(clip_hi, clip_lo)
+    inter = fine[clip_hi + 1] - fine[clip_lo]
+    ref_bins = fine[hi + 1] - fine[lo]
+    union = ref_bins + (clip_hi - clip_lo + 1) - inter
+    return inter / union if union else 0.0
+
+
+def fit_parts(cues, fine: list[int], cum: list[int], step: float) -> dict | None:
+    """Kayma zamanla basamak basamak değişiyorsa parçaları bulur.
+
+    Önce kayan pencerelerde kayma ölçülür (adaylar), sonra her repliğe aday
+    kaymalardan biri seçilir. Seçim açgözlü değil: yeni parça açmanın bedeli
+    var, böylece birkaç repliğin gürültüsü yeni parça uydurmaz.
+    """
+    if not cues:
+        return None
+    total = max(b for _, b in cues)
+    cands: list[float] = []
+    t = 0.0
+    while t < total:
+        win = [c for c in cues if t <= c[0] < t + PIECE_WINDOW]
+        if len(win) >= PIECE_MIN_CUES:
+            off = best_shift(win, cum, step, -COARSE_RANGE, COARSE_RANGE,
+                             sub_step=step, ref_cum=fine)[1]
+            if all(abs(off - x) > 0.5 for x in cands):
+                cands.append(round(off, 2))
+        t += PIECE_STRIDE
+    if len(cands) < 2:
+        return None
+
+    path = _best_path(_cue_scores(cues, fine, cands, step), PIECE_PENALTY)
+    parts = []
+    for i, j in enumerate(path):
+        if not parts or parts[-1]["pick"] != j:
+            parts.append({"pick": j, "from": i, "to": i})
+        else:
+            parts[-1]["to"] = i
+    # 3 replikten kısa parça gürültüdür: önceki parçaya katılır
+    merged = []
+    for p in parts:
+        if merged and (p["to"] - p["from"] + 1) < 3:
+            merged[-1]["to"] = p["to"]
+        else:
+            merged.append(p)
+    if len(merged) < 2:
+        return None
+
+    # her parçanın kayması kendi replikleriyle yeniden ölçülür
+    strong = []
+    weak = []
+    for p in merged:
+        sub = cues[p["from"]:p["to"] + 1]
+        d = cands[p["pick"]]
+        best = best_shift(sub, fine, step, d - 1.5, d + 1.5, FINE_STEP)[1]
+        span = sub[-1][0] - sub[0][0]
+        item = {"from": p["from"], "to": p["to"], "offset": round(best, 2)}
+        # 10 replik / 30 saniyeden küçük parça kendi kaymasını kanıtlayamaz:
+        # jenerik ve çok seyrek diyalogda rastgele bir değer çıkar
+        (strong if len(sub) >= 10 and span >= 30 else weak).append(item)
+    if not strong:
+        return None
+    if os.environ.get("SUB_HANDYMAN_DEBUG"):
+        print("strong:", strong, file=sys.stderr)
+        print("weak:", weak, file=sys.stderr)
+
+    # zayıf parçaların replikleri en iyi oturan güçlü parçanın kaymasını alır
+    offs = [s["offset"] for s in strong]
+    deltas: list[float | None] = [None] * len(cues)
+    for s in strong:
+        for i in range(s["from"], s["to"] + 1):
+            deltas[i] = s["offset"]
+    for w in weak:
+        for i in range(w["from"], w["to"] + 1):
+            if deltas[i] is not None:
+                continue
+            scores = [_cue_offset_score(cues[i], fine, o, step) for o in offs]
+            j = max(range(len(offs)), key=lambda k: (scores[k], -abs(offs[k] - w["offset"])))
+            deltas[i] = offs[j]
+    # güvenlik: hiçbir replik kaymasız kalmamalı (ilk parça zayıf çıkarsa)
+    fallback = strong[0]["offset"]
+    final: list[float] = [d if d is not None else fallback for d in deltas]
+
+    out = []
+    for s in strong:
+        offset = deltas[s["from"]]
+        if out and abs(out[-1]["offset"] - offset) < 0.05:
+            out[-1]["lines"] += s["to"] - s["from"] + 1
+            continue
+        out.append({"from": round(cues[s["from"]][0], 2), "offset": offset,
+                    "lines": s["to"] - s["from"] + 1})
+    f1, prec = _f1(cues, cum, step, 0.0, deltas=final)
+    return {"parts": out, "deltas": final, "overlap": prec, "balance": f1}
 
 
 def measure(cues, ref, ref_end: float) -> dict:
@@ -330,7 +489,7 @@ def measure(cues, ref, ref_end: float) -> dict:
     else:
         spread = None
 
-    return {
+    result = {
         "offset": round(shift, 2),
         "overlap": round(prec, 3),
         "balance": round(f1, 3),
@@ -340,10 +499,22 @@ def measure(cues, ref, ref_end: float) -> dict:
         "checks_apart": spread,
     }
 
+    # kayma tek bir değere oturmuyorsa parçalı çözüm denenir; parça ancak kendi
+    # replikleriyle kanıtlanırsa ve ölçülebilir kazanç varsa kullanılır
+    if scale == 1.0 and prec < 0.995:
+        fit = fit_parts(cues, fine, cum, step)
+        if fit and fit["overlap"] > prec + PIECE_GAIN:
+            result["overlap_one_value"] = result["overlap"]
+            result["overlap"] = round(fit["overlap"], 3)
+            result["balance"] = round(fit["balance"], 3)
+            result["parts"] = fit["parts"]
+    return result
+
 
 # ------------------------------------------------------------------- yazma
 def shift_srt(path: Path, delta: float, backup_dir: Path | None = None,
-              scale: float = 1.0) -> Path:
+              scale: float = 1.0, deltas: list[float] | None = None) -> Path:
+    """`deltas` verilirse her replik kendi kaymasıyla yazılır (parçalı kayma)."""
     raw = path.read_bytes()
     bom = raw.startswith(b"\xef\xbb\xbf")
     try:
@@ -356,13 +527,16 @@ def shift_srt(path: Path, delta: float, backup_dir: Path | None = None,
         bom = False
     text = text.replace("\r\n", "\n")
     out = []
+    cue_no = 0
     for line in text.split("\n"):
         m = re.match(r"^(\s*)(\d+:\d+:\d+[,.]\d+)(\s*-->\s*)(\d+:\d+:\d+[,.]\d+)(.*)$", line)
         if not m:
             out.append(line)
             continue
-        a = _ts_to_sec(TS_RE.search(m.group(2))) * scale + delta
-        b = _ts_to_sec(TS_RE.search(m.group(4))) * scale + delta
+        d = deltas[cue_no] if deltas is not None and cue_no < len(deltas) else delta
+        cue_no += 1
+        a = _ts_to_sec(TS_RE.search(m.group(2))) * scale + d
+        b = _ts_to_sec(TS_RE.search(m.group(4))) * scale + d
         length = max(0.2, b - a)
         if a < 0:
             # sıfırın önüne taşan replik: süresi korunur, sıfıra yaslanır
@@ -488,22 +662,38 @@ def analyze(video: Path, sub: Path | None, use_audio: bool) -> dict:
         m = measure(cues, ("audio", intervals), dur)
         m["compared_with"] = t("audio_method")
 
+    parts = m.get("parts")
     m.update({
         "video": str(video),
         "subtitle": str(sub),
         "lines": len(cues),
         "needs_fix": (m["overlap"] >= THRESH_LOW
-                      and (abs(m["offset"]) >= MIN_DELTA or abs(m["speed"] - 1.0) > 0.002)),
-        "aligned": (m["overlap"] >= THRESH_OK and abs(m["offset"]) < MIN_DELTA
+                      and (bool(parts)
+                           or abs(m["offset"]) >= MIN_DELTA
+                           or abs(m["speed"] - 1.0) > 0.002)),
+        "aligned": (not parts and m["overlap"] >= THRESH_OK and abs(m["offset"]) < MIN_DELTA
                     and abs(m["speed"] - 1.0) <= 0.002),
     })
     if abs(m["speed"] - 1.0) > 0.002:
         m["warning"] = t("warn_scale", scale=m["speed"])
-    elif m["checks_apart"] is not None and m["checks_apart"] > 1.5:
+    elif m["checks_apart"] is not None and m["checks_apart"] > 1.5 and not parts:
         m["warning"] = t("warn_region", spread=m["checks_apart"])
     if tmp and tmp.exists():
         tmp.unlink(missing_ok=True)
     return m
+
+
+def _mmss(sec: float) -> str:
+    m, s = divmod(int(round(sec)), 60)
+    return f"{m}:{s:02d}"
+
+
+def _deltas_from_parts(parts) -> list[float]:
+    """Parça listesini replik başına kayma listesine açar."""
+    deltas: list[float] = []
+    for p in parts:
+        deltas.extend([float(p["offset"])] * int(p["lines"]))
+    return deltas
 
 
 def fmt_report(r: dict) -> str:
@@ -513,8 +703,20 @@ def fmt_report(r: dict) -> str:
     mark = "✅" if r["aligned"] else ("🔧" if r["needs_fix"] else "❔")
     lines = [f"{mark} {name}"]
     lines.append(t("sub_line", name=Path(r["subtitle"]).name, cues=r["lines"]))
-    lines.append(t("shift_line", shift=r["offset"], match=r["overlap"] * 100,
-                   zero=r["overlap_unchanged"] * 100))
+    parts = r.get("parts")
+    if parts:
+        offs = [p["offset"] for p in parts]
+        lines.append(t("steps_line", n=len(parts), lo=min(offs), hi=max(offs)))
+        lines.append(t("steps_overlap_line", match=r["overlap"] * 100,
+                       zero=r["overlap_unchanged"] * 100))
+        shown = parts if len(parts) <= 6 else parts[:6]
+        txt = " · ".join(f"{_mmss(p['from'])} {p['offset']:+.2f}" for p in shown)
+        if len(parts) > len(shown):
+            txt += " · …"
+        lines.append(t("steps_parts_line", parts=txt))
+    else:
+        lines.append(t("shift_line", shift=r["offset"], match=r["overlap"] * 100,
+                       zero=r["overlap_unchanged"] * 100))
     if abs(r.get("speed", 1.0) - 1.0) > 0.002:
         lines.append(t("scale_line", scale=r["speed"]))
     lines.append(t("ref_line", method=r["compared_with"]))
@@ -608,14 +810,18 @@ def main() -> int:
                 go = args.yes
                 if not go:
                     try:
-                        ans = input(t("confirm", shift=r["offset"])).strip().lower()
+                        prompt = (t("confirm_steps", n=len(r["parts"])) if r.get("parts")
+                                  else t("confirm", shift=r["offset"]))
+                        ans = input(prompt).strip().lower()
                         go = ans.startswith(STRINGS["yes"].get(LANG, ("y",))[0])
                     except EOFError:
                         go = False
                 if go:
                     bak_dir = Path(args.backup_dir) if args.backup_dir else None
+                    # parçalı kaymada her repliğin kendi değeri var
+                    deltas = _deltas_from_parts(r["parts"]) if r.get("parts") else None
                     shift_srt(Path(r["subtitle"]), float(r["offset"]), bak_dir,
-                              float(r.get("speed", 1.0)))
+                              float(r.get("speed", 1.0)), deltas=deltas)
                     bak_path = (bak_dir / (Path(r["subtitle"]).name + ".bak")) if bak_dir \
                         else Path(str(r["subtitle"]) + ".bak")
                     r["applied"] = True

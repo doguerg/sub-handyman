@@ -201,21 +201,47 @@ Video dosyası hiçbir zaman değişmez, diskte başka hiçbir şeye dokunulmaz.
 ## Rapor ne söylüyor
 
 ```
-🔧 movie
-    subtitle: movie.tr.srt (1245 lines)
-    offset: -5.30s · overlap: 98.4% (unchanged: 84.4%)
-    compared with: subtitle track inside the video (stream 2)
-    checks (start/middle/end): -5.30 / -5.30 / -5.30
+🔧 Bir Film
+    altyazı: Bir Film.tr.srt (1245 replik)
+    kayma: -5.30 sn · örtüşme: 98.4% (değiştirmeden: 84.4%)
+    karşılaştırma: videonun içindeki altyazı izi (stream 2)
+    kontroller (baş/orta/son): -5.30 / -5.30 / -5.30
+```
+
+(Bu örnek `--lang tr` ile alınmış çıktı. Dil verilmezse rapor İngilizce gelir.)
+
+| Satır | Ne anlatıyor |
+| --- | --- |
+| `altyazı` | Hangi dosya ölçüldü ve kaç repliği var. |
+| `kayma` | Her repliğe eklenecek saniye. Eksi, altyazının **geç** geldiğini ve öne alınması gerektiğini gösterir. |
+| `örtüşme` | Yüz üzerinden, altyazının ne kadarı konuşmanın olduğu yere oturuyor. Yüksek olması iyi. |
+| `değiştirmeden` | Hiç düzeltme yapılmadan aynı ölçüm. İki sayıyı karşılaştır: birbirine yakınsa dosya zaten iyiydi, kazanç yok. |
+| `karşılaştırma` | Neyle karşılaştırıldığı. Videonun içindeki altyazı izi ya da klasördeki başka bir altyazı en güvenilir sonucu verir. Ses, son çare ve daha kaba. |
+| `kontroller` | Başta, ortada ve sonda ölçülen kayma. Üç sayı birbirine yakınsa tek kaydırma yeter. |
+
+### Kayma tek değer değilse
+
+Altyazı bazen videonun tamamına tek kaymayla oturmaz. Sebep genelde şu: altyazı,
+araya reklam girmiş bir yayına göre hazırlanmıştır. Reklamlar kesilip birleştirilirken
+sahneler kayar, kayma da dakika dakika büyür. O zaman rapor tek sayı yerine parça
+parça konuşur:
+
+```
+🔧 Bir Dizi - S01E02
+    altyazı: Bir Dizi - S01E02.tr.srt (586 replik)
+    kayma: tek değer değil, altyazı videoya 5 parçada oturuyor (+10.68 ile +24.70 sn)
+    örtüşme: 99.0% (değiştirmeden: 70.6%)
+    parçaların başladığı yerler: 0:18 +10.68 · 6:23 +13.80 · 20:47 +17.92 · 28:52 +20.36 · 39:14 +24.70
+    karşılaştırma: videonun içindeki altyazı izi (stream 2)
 ```
 
 | Satır | Ne anlatıyor |
 | --- | --- |
-| `subtitle` | Hangi dosya ölçüldü ve kaç satırı var. |
-| `offset` | Her satıra eklenecek saniye. Eksi, altyazının **geç** geldiğini ve öne alınması gerektiğini gösterir. |
-| `overlap` | Yüz üzerinden, altyazının ne kadarı konuşmanın olduğu yere oturuyor. Yüksek olması iyi. |
-| `unchanged` | Hiç düzeltme yapılmadan aynı ölçüm. İki sayıyı karşılaştır: birbirine yakınsa dosya zaten iyiydi, kazanç yok. |
-| `compared with` | Neyle karşılaştırıldığı. Videonun içindeki altyazı izi ya da klasördeki başka bir altyazı en güvenilir sonucu verir. Ses, son çare ve daha kaba. |
-| `checks` | Başta, ortada ve sonda ölçülen kayma. Üç sayı birbirine yakınsa tek kaydırma yeter. |
+| `parts` sayısı | Altyazının kaç parçaya bölündüğü. Her parça kendi kaymasını alır. |
+| `+10.68s to +24.70s` | En küçük ve en büyük kayma. İkisi arasındaki fark, tek kaydırmanın neden yetmediğini gösterir. |
+| `parts start at` | Her parçanın hangi dakikada başladığı ve o dakikadan sonra geçerli kayma. `0:18 +10.68`, on sekiz saniyeden sonra altyazıya 10.68 saniye eklenir demek. |
+
+`--fix` bu durumda parçaları ayrı ayrı uygular, tek sayı yazmaz.
 
 ### İki eşik
 
@@ -286,7 +312,24 @@ Araç bu yüzden üç kez ölçüyor: başta, ortada, sonda.
   kaydırmanın yanında bir hız düzeltmesi de uyguluyor
 - hâlâ belirsiz: yanlış bir değişiklik yazmak yerine bunu söylüyor
 
-### 5. Dosyaya ne yapıyor
+### 5. Kayma basamak basamaksa
+
+Üç ölçüm birbirini tutmuyor ama hız da suçlu değilse, geriye tek açıklama kalıyor:
+kayma zamanla basamak basamak değişiyor. Araç bunu şöyle çözüyor:
+
+1. Film üçer dakikalık pencerelere bölünür, her pencerede kayma ayrı ölçülür.
+2. Her repliğe bu ölçümlerden biri atanır. Atama açgözlü değil: parça değiştirmenin
+   bir bedeli var, böylece üç beş repliğin gürültüsü yeni parça uydurmaz.
+3. Her parçanın kayması kendi replikleriyle yeniden ölçülür. 10 replikten ya da
+   30 saniyeden kısa parça kendi kaymasını kanıtlayamaz sayılır, komşusuna katılır.
+   Jenerik, ön tanıtım ve çok seyrek diyalog böyle elenir.
+4. Parçalı çözüm ancak tek kaydırmadan ölçülebilir biçimde daha iyi çıkarsa kullanılır.
+
+Tek kaydırma zaten yüzde 99.5'i tutuyorsa bu iş hiç yapılmaz. Tek kaydırma yeterli
+olan bir dosyada parça listesi görmenin tek yolu bu değil: parçalar yalnız gerçekten
+kazanç varsa rapora girer.
+
+### 6. Dosyaya ne yapıyor
 
 `--fix` yalnız zamanları değiştirir, gerisini olduğu gibi bırakır:
 
@@ -371,6 +414,8 @@ python3 sub_handyman.py --scan /media/filmler --json > rapor.json || echo "bakı
 | `speed` | Kaydırmadan önce uygulanan hız düzeltmesi. `1.0` ise yok. |
 | `checks` | Başta, ortada ve sonda ölçülen kayma. |
 | `checks_apart` | Bu üç sayının birbirinden uzaklığı. 1.5 saniyeyi geçerse tek kaydırmaya güvenme. |
+| `overlap_one_value` | Parçalı çözüm varsa, tek kaydırmayla ne kadar kalındığı. |
+| `parts` | Parçalı çözüm varsa her parçanın başlangıcı, kayması ve replik sayısı: `from`, `offset`, `lines`. |
 | `compared_with` | Neyle karşılaştırıldığı. |
 | `lines` | Altyazıdaki satır sayısı. |
 | `needs_fix` | Bir kaydırma mümkün ve henüz uygulanmadı. |
@@ -463,6 +508,10 @@ Arama hızlı. Asıl zamanı videoyu okumak alıyor.
   yazılır.
 - Değişken kare hızı olan ve kare düşüren dosyalarda kayma ne kaydırmayla ne hız
   düzeltmesiyle anlatılabilir. Üç ölçüm bunu ortaya çıkarır, gerisi elle iş.
+- Açılışta ya da jenerikte diyalog çok seyrekse oradaki kayma birkaç saniye kalabilir.
+  Ölçülecek replik yoksa araç tahmin yürütmez, dokunmaz.
+- Parçalı çözüm basamakları bulur, ama iki dakikadan kısa bir basamağı kaçırabilir.
+  Bir sahnede hâlâ kayma görüyorsan dosyayı tekrar ölçmek yeni bir parça çıkarır.
 
 ## Bir şey ters giderse
 
@@ -485,12 +534,14 @@ Emin olamadığında `--fix` vermeden çalıştır. Ölçmek hiçbir şeyi deği
 python3 -m unittest discover -s tests -v
 ```
 
-21 test var. Video ve ffmpeg gerekmiyor. Altyazı dosyası okumayı (UTF-8 imzası,
+25 test var. Video ve ffmpeg gerekmiyor. Altyazı dosyası okumayı (UTF-8 imzası,
 Windows satır sonları, bozuk girdi, iki, üç ve dört ondalıklı zamanlar), zaman
 yazmayı ve sıfırda kırpmayı, bilinen kaymaları kesirli değerler dahil geri
 bulmayı, kare hızı farkını yakalamayı, üç ölçümün birbirini tutmasını, ses
 taramasının ayrıştırılmasını, eski Türkçe kodlamanın korunmasını, zor adlı
-dosyaların bulunmasını ve raporun dilini sınıyor.
+dosyaların bulunmasını, raporun dilini ve basamaklı kaymanın bulunmasını sınıyor.
+Basamak testi, yoğun diyaloglu bir referansın yanlış kaymayı haklı göstermesini
+de yasaklıyor; parçalar uydurma değil, ölçümle geliyor.
 
 ## Lisans
 

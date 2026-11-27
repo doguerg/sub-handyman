@@ -220,6 +220,30 @@ The video file is never changed, and nothing else on disk is touched.
 | `compared with` | What the subtitle was measured against. A subtitle track inside the video, or another subtitle file in the folder, gives the most reliable answer. Sound is the fallback and is less exact. |
 | `checks` | The offset measured near the start, the middle and the end. Three similar numbers mean one shift is enough. |
 
+### When one offset is not enough
+
+Sometimes a subtitle does not fit the whole video with a single shift. The usual
+reason: the subtitle was timed for a broadcast that carried adverts. Cutting the
+adverts out moves scenes around, so the drift grows minute by minute. Then the
+report talks in parts instead of one number:
+
+```
+🔧 A Show - S01E02
+    subtitle: A Show - S01E02.tr.srt (586 lines)
+    offset: not one value, the subtitle fits the video in 5 parts, +10.68s to +24.70s
+    overlap: 99.0% (unchanged: 70.6%)
+    parts start at: 0:18 +10.68 · 6:23 +13.80 · 20:47 +17.92 · 28:52 +20.36 · 39:14 +24.70
+    compared with: subtitle track inside the video (stream 2)
+```
+
+| Line | What it tells you |
+| --- | --- |
+| How many parts | How many pieces the subtitle was split into. Each part gets its own offset. |
+| `+10.68s to +24.70s` | The smallest and the largest offset. The gap between them shows why one shift was not enough. |
+| `parts start at` | Where each part starts and the offset that applies from that second on. `0:18 +10.68` means the subtitle moves 10.68 seconds from eighteen seconds onwards. |
+
+With `--fix` the parts are written separately; it does not fall back to one number.
+
 ### The two cut-offs
 
 | Situation | What the tool says |
@@ -289,7 +313,24 @@ end:
   better, applies a speed correction on top of the shift
 - still unclear: it tells you instead of writing a wrong change
 
-### 5. What happens to your file
+### 5. When the drift comes in steps
+
+If the three measurements disagree but the speed is fine, only one explanation is
+left: the offset changes in steps over time. The tool handles it like this:
+
+1. The film is cut into three-minute windows and the offset is measured in each.
+2. Every line is given one of those offsets. Not greedily: changing part costs
+   something, so the noise of a few lines cannot invent a new part.
+3. Each part is measured again on its own lines. A part shorter than 10 lines or
+   30 seconds counts as unproven and joins its neighbour. That is how credits,
+   recaps and very sparse dialogue drop out.
+4. The part-based answer is only used when it is measurably better than a single
+   shift.
+
+If one shift already covers 99.5%, this work is never done. A part list only
+appears in the report when there is a real gain behind it.
+
+### 6. What happens to your file
 
 `--fix` rewrites the timings and keeps the rest as it was:
 
@@ -374,6 +415,8 @@ python3 sub_handyman.py --scan /media/movies --json > report.json || echo "needs
 | `speed` | Speed correction applied before the shift. `1.0` means none. |
 | `checks` | Offset measured near the start, the middle and the end. |
 | `checks_apart` | How far apart those three numbers are. Above about 1.5 s, do not trust a single shift. |
+| `overlap_one_value` | Only with a part-based answer: what a single shift would have reached. |
+| `parts` | Only with a part-based answer: `from`, `offset` and `lines` for each part. |
 | `compared_with` | What the subtitle was measured against. |
 | `lines` | Number of lines in the subtitle. |
 | `needs_fix` | A shift is available and has not been applied yet. |
@@ -468,6 +511,12 @@ The search itself is quick. Reading the video is what takes time.
 - Files with a variable frame rate and dropped frames can go out of step in a way
   that neither a shift nor a speed correction describes. The three checks reveal
   it, and then it is a manual job.
+- Where dialogue is very sparse, such as an opening or end credits, the offset
+  there can stay a few seconds off. With nothing to measure the tool does not
+  guess and does not touch it.
+- The part-based answer finds the steps, but a step shorter than about two
+  minutes can be missed. If one scene is still off, measure the file again and
+  the extra pass will surface that part.
 
 ## When something goes wrong
 
@@ -490,12 +539,14 @@ When in doubt, run without `--fix`. Measuring changes nothing.
 python3 -m unittest discover -s tests -v
 ```
 
-21 tests. No video and no ffmpeg needed. They cover reading subtitle files (byte
+25 tests. No video and no ffmpeg needed. They cover reading subtitle files (byte
 order marks, Windows line endings, broken input, timestamps with two, three or
 four decimals), writing timestamps and clamping them at zero, recovering known
 offsets including fractional ones, spotting a frame-rate difference, the three
 checks agreeing, parsing the sound scan, keeping the old Turkish encoding, finding
-files with awkward names, and the wording of the report.
+files with awkward names, the wording of the report, and finding step-shaped
+drift. One test also forbids a dense reference track from justifying a wrong
+offset, so parts come from measurement, not invention.
 
 ## License
 

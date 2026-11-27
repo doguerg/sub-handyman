@@ -180,6 +180,59 @@ class ShiftTests(unittest.TestCase):
             self.assertIn("Merhaba.".encode(), raw)
 
 
+class PartTests(unittest.TestCase):
+    """Altyazı farklı kesilmiş bir yayına göre hazırlanmışsa kayma basamaklıdır."""
+
+    @staticmethod
+    def _stepped(ref, cuts, deltas):
+        def d(t):
+            return deltas[sum(1 for c in cuts if t >= c) - 1] if cuts else deltas[0]
+        return [(a + d(a), b + d(a)) for a, b in ref]
+
+    def test_step_shifts_are_found(self):
+        ref = make_cues(count=700, seed=9)
+        cuts = [300.0, 700.0, 1100.0]
+        cand = self._stepped(ref, cuts, [10.0, 14.0, 18.0, 22.0])
+        res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
+        self.assertIn("parts", res)
+        self.assertGreaterEqual(len(res["parts"]), 3)
+        self.assertGreater(res["overlap"], 0.9)
+        # tek kaymayla ne kadar kalındığı raporda karşılaştırma için duruyor
+        self.assertLess(res["overlap_one_value"], res["overlap"])
+
+    def test_constant_shift_gets_no_parts(self):
+        ref = make_cues(count=500, seed=4)
+        cand = [(a + 6.0, b + 6.0) for a, b in ref]
+        res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
+        self.assertNotIn("parts", res)
+
+    def test_dense_reference_does_not_invent_parts(self):
+        """Referans yoğunsa yanlış kayma bile 'her replik bir yere oturuyor'
+        görünür; parçalı çözüm bu yalana kanmamalı."""
+        import random
+        rnd = random.Random(21)
+        ref, t = [], 0.0
+        while t < 1200:
+            dur = rnd.uniform(0.8, 3.0)
+            ref.append((t, t + dur))
+            t += dur + rnd.uniform(0.05, 0.3)   # aşırı yoğun diyalog
+        cand = [(a + 4.0, b + 4.0) for a, b in ref]
+        res = ss.measure(cand, ref, max(b for _, b in ref) + 30)
+        self.assertNotIn("parts", res)
+        self.assertAlmostEqual(res["offset"], -4.0, delta=0.2)
+
+    def test_shift_srt_applies_per_cue_offsets(self):
+        with tempfile.TemporaryDirectory() as td:
+            td = Path(td)
+            p = write_srt(td, "p.srt", SRT_SAMPLE)
+            before = ss.parse_srt(p)
+            ss.shift_srt(p, 0.0, td / "bak", deltas=[1.0, 2.0, 3.0])
+            after = ss.parse_srt(p)
+        for (a0, a1), (b0, b1), d in zip(before, after, (1.0, 2.0, 3.0)):
+            self.assertAlmostEqual(b0 - a0, d, places=2)
+            self.assertAlmostEqual(b1 - a1, d, places=2)
+
+
 class MeasureTests(unittest.TestCase):
     def test_recovers_known_shift(self):
         ref = make_cues()
